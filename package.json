@@ -1,0 +1,15 @@
+{
+  "name": "orca-claude-trajectory",
+  "private": true,
+  "type": "module",
+  "description": "Development tooling only. Orca loads the plugin from src/ as written; nothing here ships.",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "orca plugin test . --json",
+    "check": "orca plugin check . --json"
+  },
+  "devDependencies": {
+    "@types/node": "25.6.2",
+    "typescript": "5.9.3"
+  }
+}
