@@ -1,7 +1,7 @@
 // `orca plugin check` renders the panel once per scenario, with the worker stubbed by `requests`.
 import { defineCheck } from 'orca/testing'
 import { build, parseLines } from './transcript.ts'
-import { basicSession, jsonl, T0 } from './fixtures.ts'
+import { basicSession, jsonl, T0, withShape } from './fixtures.ts'
 import type { TrajectoryAnswer } from './protocol.ts'
 
 const base: TrajectoryAnswer = {
@@ -16,5 +16,7 @@ const base: TrajectoryAnswer = {
 export default defineCheck({
   session: { requests: { 'trajectory.get': () => base } },
   duration: { requests: { 'trajectory.get': () => base }, persisted: { plugin: { duration: true } } },
+  'no calls': { requests: { 'trajectory.get': () => base }, persisted: { plugin: { showCalls: false } } },
+  breakdown: { requests: { 'trajectory.get': () => ({ ...base, data: build(parseLines(jsonl(withShape())), [], true, T0 + 86_400_000) }) } },
   empty: { requests: { 'trajectory.get': () => ({ ...base, sessions: [], sessionId: null, data: null, notice: 'No Claude Code sessions in this workspace yet.' }) } }
 })

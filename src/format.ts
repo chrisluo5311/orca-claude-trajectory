@@ -1,6 +1,6 @@
 // Figures as the panel writes them, and the trajectory as plain text for Export.
 
-import type { Step, Trajectory } from './protocol.ts'
+import type { Step, Trajectory, Turn } from './protocol.ts'
 
 /** "6.2k", "182", "1.4M": a token count with no unit. */
 export function kTok(n: number | null | undefined): string {
@@ -28,6 +28,24 @@ export function stamp(ms: number): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
 }
 
+// Characters drawn about two cells wide: CJK, full-width forms and emoji.
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u
+
+/** At most `cells` cells wide, by whole characters, with "…" when cut. */
+export function cutCells(text: string, cells: number): string {
+  let used = 0
+  let out = ''
+  for (const ch of text) {
+    used += WIDE.test(ch) ? 2 : 1
+    if (used > cells - 1 && out.length + ch.length < text.length) return `${out}…`
+    out += ch
+  }
+  return out
+}
+
+/** "Turn 3", "Earlier", or what started a turn nobody typed. */
+export const turnName = (t: Turn): string => t.auto ?? (t.earlier ? 'Earlier' : `Turn ${t.n}`)
+
 export const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
 export const stepMs = (s: Step, now: number): number => (s.endedAt ?? now) - s.at
 export const isAgentTool = (tool: string): boolean => tool === 'Agent' || tool === 'Task'
@@ -40,9 +58,10 @@ export const isAgentTool = (tool: string): boolean => tool === 'Agent' || tool =
 export function trajectoryText(t: Trajectory, now = Date.now()): string {
   const out = [`Trajectory · ${plural(t.requests, 'request')} to Claude · ${plural(t.calls, 'tool call')}`]
   if (t.overhead != null) out.push(`Fixed overhead ≈${kTok(t.overhead)} tokens, sent with every request`)
+  for (const p of t.fixed ?? []) out.push(`  ${p.name} ≈${kTok(p.tokens)}`)
   if (t.truncated) out.push('(the oldest part of the session is left out)')
   for (const turn of t.turns) {
-    out.push('', `${turn.earlier ? 'Earlier' : `Turn ${turn.n}`} · ${plural(turn.steps.length, 'request')}`)
+    out.push('', `${turnName(turn)} · ${plural(turn.steps.length, 'request')}`)
     for (const s of turn.steps) {
       if (s.isCompacted) out.push('  Context compacted')
       const figures = s.status === 'streaming' ? 'under way' : `${kTok(s.input) || '–'} in · ${kTok(s.output) || '–'} out`

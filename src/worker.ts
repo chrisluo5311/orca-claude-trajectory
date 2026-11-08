@@ -10,6 +10,7 @@ import type { OrcaWorkerApi } from 'orca/worker'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, isAbsolute, join } from 'node:path'
 import { claudeHome, listSessions, readSubagents, SESSION_ID, TranscriptCache } from './locate.ts'
+import { isAgentTool } from './format.ts'
 import { build } from './transcript.ts'
 import type { Trajectory, TrajectoryAnswer, WorkspaceInfo } from './protocol.ts'
 import { cut, stripControls } from './redact.ts'
@@ -46,12 +47,18 @@ async function focusedWorkspace(orca: OrcaWorkerApi, all: Workspace[], home: str
   return best?.w ?? null
 }
 
-// Drops the oldest turns, then the oldest requests of what is left, until the
-// answer fits what a request may carry and a panel may draw.
+// Drops the FIXED breakdown, then the oldest turns, then the oldest requests of
+// what is left, until the answer fits what a request may carry and a panel may
+// draw: the conversation matters more than what the overhead is made of.
 export function fit(answer: TrajectoryAnswer): TrajectoryAnswer {
   const data = answer.data
   if (!data) return answer
   while (JSON.stringify(answer).length > MAX_ANSWER) {
+    if (data.fixed) {
+      data.fixed = null
+      data.fixedTrimmed = true
+      continue
+    }
     if (data.turns.length > 1) data.turns.shift()
     else if (data.turns[0] && data.turns[0].steps.length > 1) data.turns[0].steps.shift()
     else if (data.turns[0]?.steps[0]?.calls.length) data.turns[0].steps[0].calls.shift()
@@ -135,7 +142,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     try {
       const { records, complete } = await cache.read(session.file)
       const agentCalls = new Set<string>()
-      for (const r of records) if (r.k === 'asst') for (const t of r.tools) if (t.tool === 'Agent' || t.tool === 'Task') agentCalls.add(t.id)
+      for (const r of records) if (r.k === 'asst') for (const t of r.tools) if (isAgentTool(t.tool)) agentCalls.add(t.id)
       const subagents = agentCalls.size ? await readSubagents(root, session.dir, session.id, agentCalls) : []
       data = build(records, subagents, complete)
     } catch (err) {

@@ -2,6 +2,7 @@ import { assert, test } from 'orca/testing'
 import { build, LIMITS, parseLines, slim, toolSummary } from './transcript.ts'
 import { HIDDEN } from './redact.ts'
 import { apiRequest, assistant, basicSession, iso, jsonl, prompt, T0, toolResult, toolUse } from './fixtures.ts'
+import { attachment, requestShape, withShape } from './fixtures.ts'
 
 const LATER = T0 + 24 * 3600_000 // long after: nothing is under way
 
@@ -173,4 +174,179 @@ test('tool summaries', () => {
   assert.equal(toolSummary('Write', { file_path: 'C:\\a\\b.txt' }), 'b.txt')
   assert.equal(toolSummary('Mystery', null), '')
   assert.equal(slim(null), null)
+})
+
+test('a Skill call says which skill', () => {
+  assert.equal(toolSummary('Skill', { skill: 'orca-cli', args: 'list' }), 'orca-cli list')
+  assert.equal(toolSummary('Skill', { skill: 'orca-cli' }), 'orca-cli')
+})
+
+test('the fixed overhead by what it is made of', () => {
+  const t = build(parseLines(jsonl(withShape())), [], true, LATER)
+  const by = new Map(t.fixed!.map((p) => [p.key, p]))
+  assert.deepEqual([...by.keys()], ['system', 'tools', 'mcp', 'mcpInstructions', 'memory', 'skills', 'agents', 'deferred', 'other'])
+  // The parts are the whole estimate.
+  assert.equal(t.fixed!.reduce((n, p) => n + p.tokens, 0), t.overhead)
+  assert.deepEqual(by.get('tools')!.items!.map((x) => x.name), ['Bash', 'Read'])
+  const mcp = by.get('mcp')!
+  assert.equal(mcp.note, '2 servers')
+  assert.equal(mcp.items![0].name, 'figma')
+  assert.deepEqual(mcp.items![0].items!.map((x) => x.name), ['use_figma'])
+  // A server named by an id is called by its tools.
+  assert.equal(mcp.items![1].name, 'Connector · batch')
+  assert.deepEqual(by.get('skills')!.items!.map((x) => x.name), ['long-skill', 'short:skill'])
+  assert.equal(by.get('memory')!.items![0].name, '/work/app/CLAUDE.md')
+  assert.deepEqual(by.get('other')!.items!.map((x) => x.name), ['environment'])
+})
+
+test('the fixed overhead keeps names and sizes, never text', () => {
+  const t = build(parseLines(jsonl(withShape())), [], true, LATER)
+  const said = JSON.stringify(t.fixed)
+  for (const text of ['SYSTEM-WORDS', 'TOOL-WORDS', 'MEMORY-WORDS', 'SKILL-WORDS', 'SERVER-WORDS']) assert.ok(!said.includes(text), text)
+})
+
+test('only what came before the first request counts towards it', () => {
+  const lines = withShape()
+  const before = build(parseLines(jsonl(lines)), [], true, LATER)
+  const later = build(parseLines(jsonl([...lines, attachment('environment', 'x'.repeat(50_000))])), [], true, LATER)
+  assert.deepEqual(later.fixed, before.fixed)
+})
+
+test('no breakdown from a transcript that doesn’t record the shape', () => {
+  const t = build(parseLines(jsonl(basicSession())), [], true, LATER)
+  assert.ok(t.overhead != null)
+  assert.equal(t.fixed, null)
+  // A shape sent by a subagent's request doesn't stand in for the main loop's.
+  const lines = [requestShape('h1'), { ...apiRequest(10, 'req-x', 'agent:builtin'), shapeHash: 'h1' }, ...basicSession()]
+  assert.equal(build(parseLines(jsonl(lines)), [], true, LATER).fixed, null)
+})
+
+test('an agent another subagent started hangs under the first Agent call', () => {
+  const lines = [
+    prompt(0, 'go'),
+    apiRequest(10, 'req-a'),
+    assistant(20, 'r1', [toolUse('toolu_top', 'Agent', { description: 'top', subagent_type: 'Explore' })], undefined, 'tool_use', 'req-a'),
+    toolResult(900, 'toolu_top', 'done'),
+    assistant(950, 'r2', [{ type: 'text', text: 'ok' }])
+  ]
+  const child = parseLines(jsonl([
+    assistant(100, 'a1', [toolUse('toolu_read', 'Read', { file_path: '/a.ts' }), toolUse('toolu_inner', 'Agent', { description: 'inner' })], undefined, 'tool_use'),
+    toolResult(150, 'toolu_read', 'x'),
+    toolResult(600, 'toolu_inner', 'y')
+  ]), { sidechain: true })
+  const grandchild = parseLines(jsonl([
+    assistant(200, 'b1', [toolUse('toolu_grep', 'Grep', { pattern: 'p' })], undefined, 'tool_use'),
+    toolResult(250, 'toolu_grep', 'z')
+  ]), { sidechain: true })
+  // Newest file first, as they are read: the inner agent before the one that started it.
+  const t = build(parseLines(jsonl(lines)), [{ toolUseId: 'toolu_inner', agentType: 'Plan', records: grandchild }, { toolUseId: 'toolu_top', agentType: 'Explore', records: child }], true, LATER)
+  const top = t.turns[0].steps[0].calls[0]
+  assert.deepEqual(top.sub.map((c) => c.tool), ['Read', 'Agent', 'Grep'])
+  assert.equal(top.agentType, 'Explore')
+})
+
+test('a repeated tool id gives one sub-call', () => {
+  const lines = [prompt(0, 'go'), assistant(20, 'r1', [toolUse('toolu_top', 'Agent', { description: 'top' })])]
+  const records = parseLines(jsonl([assistant(100, 'a1', [toolUse('toolu_same', 'Read', { file_path: '/a' })], undefined, 'tool_use')]), { sidechain: true })
+  const t = build(parseLines(jsonl(lines)), [{ toolUseId: 'toolu_top', agentType: null, records }, { toolUseId: 'toolu_top', agentType: null, records }], true, LATER)
+  assert.deepEqual(t.turns[0].steps[0].calls[0].sub.map((c) => c.id), ['toolu_same'])
+})
+
+test('agents nested past any depth keep their calls, and say who made them', () => {
+  const sub = (id: string, nextId: string | null) => ({
+    toolUseId: id,
+    agentType: `type-${id}`,
+    records: parseLines(jsonl([assistant(100, `a-${id}`, [toolUse(`read-${id}`, 'Read', { file_path: '/a' }), ...(nextId ? [toolUse(nextId, 'Agent', { description: 'x' })] : [])], undefined, 'tool_use')]), { sidechain: true })
+  })
+  const chain = ['top', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7']
+  const agents = chain.map((id, i) => sub(id, chain[i + 1] ?? null))
+  const t = build(parseLines(jsonl([prompt(0, 'go'), assistant(20, 'r1', [toolUse('top', 'Agent', { description: 'top' })])])), agents, true, LATER)
+  const calls = t.turns[0].steps[0].calls[0].sub
+  assert.ok(calls.some((c) => c.id === 'read-n7'))
+  assert.equal(calls.find((c) => c.id === 'read-top')!.by, null)
+  assert.equal(calls.find((c) => c.id === 'read-n7')!.by, 'type-n7')
+})
+
+test('agents that say they started each other end, unowned', () => {
+  const a = (id: string, other: string) => ({ toolUseId: id, agentType: null, records: parseLines(jsonl([assistant(1, id, [toolUse(other, 'Agent', {})])]), { sidechain: true }) })
+  const t = build(parseLines(jsonl([prompt(0, 'go'), assistant(20, 'r1', [{ type: 'text', text: 'ok' }])])), [a('x', 'y'), a('y', 'x')], true, LATER)
+  assert.equal(t.calls, 0)
+})
+
+test('shares of the fixed overhead are never below zero, and sum to it', () => {
+  const lines = withShape()
+  // A tiny overhead over many parts: rounding each alone would overshoot.
+  const small = lines.map((l) => {
+    const o = l as { type?: string; message?: { usage?: object } }
+    return o.type === 'assistant' ? { ...o, message: { ...o.message, usage: { input_tokens: 15, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } } : l
+  })
+  const t = build(parseLines(jsonl(small)), [], true, LATER)
+  assert.ok(t.fixed!.every((p) => p.tokens >= 0))
+  assert.equal(t.fixed!.reduce((n, p) => n + p.tokens, 0), t.overhead)
+})
+
+test('a bullet inside a skill’s description is not a skill, and a listing is bounded', () => {
+  const content = '- one: does\n- and also this\n- two'
+  const [rec] = parseLines(jsonl([attachment('skill_listing', content, { content, names: ['one', 'two'] })]))
+  assert.deepEqual(rec.k === 'ctx' && rec.items.map((x) => x.name), ['one', 'two'])
+  const names = Array.from({ length: 5000 }, (_, i) => `s${i}`)
+  const huge = names.map((n) => `- ${n}`).join('\n')
+  const [big] = parseLines(jsonl([attachment('skill_listing', huge, { content: huge, names })]))
+  assert.ok(big.k === 'ctx' && big.items.length <= 1000)
+})
+
+test('the breakdown is of the request that was answered, not one retried before it', () => {
+  const [title, p, , ...rest] = withShape().slice(0, 0).concat(basicSession())
+  const lines = [
+    title,
+    requestShape('abandoned', [{ name: 'Gone', description: 'x'.repeat(9000) }]),
+    requestShape('used', [{ name: 'Read', description: 'x'.repeat(100) }]),
+    p,
+    { ...apiRequest(50, 'req-gone'), shapeHash: 'abandoned' },
+    { ...apiRequest(100, 'req-a'), shapeHash: 'used' },
+    { ...apiRequest(101, 'req-later'), shapeHash: 'abandoned' },
+    ...rest
+  ]
+  const t = build(parseLines(jsonl(lines)), [], true, LATER)
+  assert.deepEqual(t.fixed!.find((x) => x.key === 'tools')!.items!.map((x) => x.name), ['Read'])
+})
+
+test('a turn keeps its number when older ones leave the window', () => {
+  const lines: unknown[] = []
+  for (let i = 0; i < LIMITS.steps + 5; i++) lines.push(prompt(i * 10, `p${i}`), assistant(i * 10 + 1, `r${i}`, [{ type: 'text', text: 'ok' }]))
+  const t = build(parseLines(jsonl(lines)), [], true, LATER)
+  assert.equal(t.turns[0].n, 6)
+  assert.equal(t.turns[0].prompt, 'p5')
+  assert.equal(t.turns.at(-1)!.n, LIMITS.steps + 5)
+})
+
+const reply = (ms: number, id: string) => assistant(ms, id, [{ type: 'text', text: 'ok' }])
+const promptOf = (text: string) => build(parseLines(jsonl([prompt(0, text), reply(10, 'r1')])), [], true, LATER).turns[0]
+
+test('a command run with "!" reads as what was typed', () => {
+  assert.equal(promptOf('<bash-input>comfy update</bash-input>').prompt, '! comfy update')
+  assert.equal(parseLines(jsonl([prompt(0, '<bash-stdout>done</bash-stdout><bash-stderr></bash-stderr>')])).length, 0)
+})
+
+test('what the editor had open is not part of the prompt', () => {
+  assert.equal(promptOf('<ide_opened_file>The user opened /a.ts</ide_opened_file>Fix this').prompt, 'Fix this')
+  assert.equal(promptOf('<ide_selection>lines 1-2</ide_selection>\n<ide_opened_file>/a.ts</ide_opened_file>\nWhy?').prompt, 'Why?')
+  assert.equal(parseLines(jsonl([prompt(0, '<ide_opened_file>/a.ts</ide_opened_file>')])).length, 0)
+})
+
+test('an event nobody typed is not a numbered turn, and none of its text is kept', () => {
+  const lines = [
+    prompt(0, 'first'), reply(10, 'r1'),
+    prompt(100, '<system-reminder>x</system-reminder><task-notification><summary>SECRET-WORDS</summary></task-notification>'), reply(110, 'r2'),
+    prompt(200, 'second'), reply(210, 'r3')
+  ]
+  const t = build(parseLines(jsonl(lines)), [], true, LATER)
+  assert.deepEqual(t.turns.map((x) => [x.n, x.auto]), [[1, null], [0, 'Background task'], [2, null]])
+  assert.equal(t.turns[1].steps.length, 1)
+  assert.ok(!JSON.stringify(t).includes('SECRET-WORDS'))
+})
+
+test('an event still waiting on its reply draws nothing', () => {
+  const t = build(parseLines(jsonl([prompt(0, 'first'), reply(10, 'r1'), prompt(100, '<ci-monitor-event>x</ci-monitor-event>')])), [], true, LATER)
+  assert.equal(t.turns.length, 1)
 })

@@ -10,6 +10,8 @@ export type SubCall = {
   ms: number | null
   done: boolean
   isError: boolean
+  /** The agent that made it, when not the one its row sits under: another subagent started that one. */
+  by: string | null
 }
 
 export type Call = SubCall & {
@@ -51,13 +53,24 @@ export type Turn = {
   tokens: number | null
   /** Requests whose prompt fell before what was read. */
   earlier: boolean
+  /** What started it when nobody typed it, a finished background task say: not a numbered turn. */
+  auto: string | null
   steps: Step[]
 }
+
+/** One thing the fixed overhead is made of, in estimated tokens: a tool, a skill, an MCP server. */
+export type FixedItem = { name: string; tokens: number; items?: FixedItem[] }
+/** A category of the fixed overhead, its items largest first. */
+export type FixedPart = FixedItem & { key: string; note: string | null }
 
 export type Trajectory = {
   turns: Turn[]
   /** Estimated tokens every request carries before the conversation, or null when unknown. */
   overhead: number | null
+  /** That estimate split by what it is made of, or null when the transcript doesn't say. */
+  fixed: FixedPart[] | null
+  /** The breakdown was known but left out so the answer would fit. */
+  fixedTrimmed: boolean
   /** The transcript was longer than what is read: its oldest part is left out. */
   truncated: boolean
   requests: number

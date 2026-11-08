@@ -102,14 +102,27 @@ test('picks a listed session by id', async () => {
 
 test('a huge answer is trimmed to fit, oldest first', async () => {
   const { fit } = await import('./worker.ts')
-  const call = (i: number) => ({ id: `c${i}`, tool: 'Bash', summary: 'x'.repeat(80), at: 0, ms: 1, done: true, isError: false, input: Array.from({ length: 8 }, (_, k): [string, string] => [`k${k}`, 'v'.repeat(160)]), lines: ['l'.repeat(160), 'l'.repeat(160), 'l'.repeat(160)], chars: 1, tokens: 1, agentType: null, sub: [] })
+  const call = (i: number) => ({ id: `c${i}`, tool: 'Bash', summary: 'x'.repeat(80), at: 0, ms: 1, done: true, isError: false, by: null, input: Array.from({ length: 8 }, (_, k): [string, string] => [`k${k}`, 'v'.repeat(160)]), lines: ['l'.repeat(160), 'l'.repeat(160), 'l'.repeat(160)], chars: 1, tokens: 1, agentType: null, sub: [] })
   const step = (n: number) => ({ n, at: 0, firstAt: 0, endedAt: 1, status: 'done' as const, input: 1, output: 1, cacheRead: 0, text: 't'.repeat(200), stopReason: null, model: null, isCompacted: false, calls: Array.from({ length: 30 }, (_, i) => call(n * 100 + i)) })
   const a: TrajectoryAnswer = {
     workspaces: [], workspaceId: 'ws', sessions: [], sessionId: S1, notice: null,
-    data: { turns: [{ n: 1, at: 0, prompt: 'p', chars: 1, tokens: 1, earlier: false, steps: Array.from({ length: 60 }, (_, i) => step(i + 1)) }], overhead: null, truncated: false, requests: 60, calls: 1800, tps: null, next: null }
+    data: { turns: [{ n: 1, at: 0, prompt: 'p', chars: 1, tokens: 1, earlier: false, auto: null, steps: Array.from({ length: 60 }, (_, i) => step(i + 1)) }], overhead: null, fixed: null, fixedTrimmed: false, truncated: false, requests: 60, calls: 1800, tps: null, next: null }
   }
   const out = fit(a)
   assert.ok(JSON.stringify(out).length <= 384 * 1024)
   assert.ok(out.data!.truncated)
   assert.equal(out.data!.turns[0].steps.at(-1)!.n, 60)
+})
+
+test('the FIXED breakdown goes first, before any of the conversation', async () => {
+  const { fit } = await import('./worker.ts')
+  const a: TrajectoryAnswer = {
+    workspaces: [], workspaceId: 'ws', sessions: [], sessionId: S1, notice: null,
+    data: { turns: [{ n: 1, at: 0, prompt: 'p', chars: 1, tokens: 1, earlier: false, auto: null, steps: [] }, { n: 2, at: 1, prompt: 'q', chars: 1, tokens: 1, earlier: false, auto: null, steps: [] }], overhead: 9, fixed: [{ key: 'tools', name: 'x'.repeat(400 * 1024), note: null, tokens: 9 }], fixedTrimmed: false, truncated: false, requests: 0, calls: 0, tps: null, next: null }
+  }
+  const out = fit(a).data!
+  assert.equal(out.fixed, null)
+  assert.ok(out.fixedTrimmed)
+  assert.equal(out.turns.length, 2)
+  assert.equal(out.truncated, false)
 })

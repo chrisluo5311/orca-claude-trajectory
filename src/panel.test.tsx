@@ -1,7 +1,8 @@
 import { afterEach, assert, mockHost, mount, test, type TestPanel } from 'orca/testing'
 import * as panel from './panel.tsx'
+import { cutCells } from './format.ts'
 import { build, parseLines } from './transcript.ts'
-import { basicSession, jsonl, prompt, T0 } from './fixtures.ts'
+import { assistant, basicSession, jsonl, prompt, T0, withShape } from './fixtures.ts'
 import type { TrajectoryAnswer } from './protocol.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -89,4 +90,116 @@ test('the worker failing shows an error, not a crash', async () => {
   view = await mount(panel, { host })
   assert.ok(drawn('The session could not be read.'))
   assert.ok(!JSON.stringify(view.tree()).includes('/Users/secret'))
+})
+
+const twoTurns = (): TrajectoryAnswer =>
+  answer({
+    data: build(
+      parseLines(jsonl([...basicSession(), prompt(5000, 'A second question'), assistant(6000, 'r3', [{ type: 'text', text: 'Answered.' }], { input_tokens: 2, output_tokens: 10, cache_read_input_tokens: 21000, cache_creation_input_tokens: 0 })])),
+      [],
+      true,
+      T0 + 86_400_000
+    )
+  })
+const hostOf = (a: TrajectoryAnswer) => mockHost({ capabilities: ['workspace:read', 'agent:read'], requests: { 'trajectory.get': () => a } })
+
+test('a folded turn says what it was about', async () => {
+  view = await mount(panel, { host: hostOf(twoTurns()) })
+  // Turn 1 is folded by default, the newest open.
+  assert.ok(drawn('Turn 1 · Read the parser and f…'))
+  assert.ok(!drawn('Turn 2 · A second question'))
+  assert.deepEqual(view.errors, [])
+})
+
+test('the toolbar folds every turn, then opens them', async () => {
+  view = await mount(panel, { host: hostOf(twoTurns()) })
+  await view.press({ role: 'button', text: 'Fold turns' })
+  assert.ok(view.find({ role: 'button', text: 'Open turns' }))
+  await view.press({ role: 'button', text: 'Open turns' })
+  assert.ok(view.find({ role: 'button', text: 'Fold turns' }))
+  assert.deepEqual(view.errors, [])
+  assert.deepEqual(view.refusals, [])
+})
+
+test('Calls off leaves the requests without their calls, and closes a call’s details', async () => {
+  view = await mount(panel, { host: hostOf(answer()) })
+  await view.expand({ label: 'Trajectory rows' }, 'r1')
+  await view.selectItem({ label: 'Trajectory rows' }, 'ctoolu_1')
+  assert.ok(drawn('Called by'))
+  await view.toggle({ label: 'Calls' })
+  assert.ok(!drawn('Called by'))
+  assert.ok(!drawn('parser.ts'))
+  await view.toggle({ label: 'Calls' })
+  assert.deepEqual(view.errors, [])
+})
+
+test('FIXED opens to its categories', async () => {
+  view = await mount(panel, { host: hostOf(answer({ data: build(parseLines(jsonl(withShape())), [], true, T0 + 86_400_000) })) })
+  await view.selectItem({ label: 'Trajectory rows' }, 'fixed')
+  assert.ok(view.find({ label: 'Fixed overhead by category' }))
+  for (const name of ['System prompt', 'Built-in tools', 'MCP tools', 'Skills']) assert.ok(drawn(name), name)
+  assert.ok(drawn('of its input'))
+  assert.deepEqual(view.errors, [])
+  assert.deepEqual(view.refusals, [])
+})
+
+test('FIXED without a recorded shape says so', async () => {
+  view = await mount(panel, { host: hostOf(answer()) })
+  await view.selectItem({ label: 'Trajectory rows' }, 'fixed')
+  assert.ok(drawn('doesn’t record what it is made of'))
+})
+
+test('cuts a folded prompt by cells, and never through a character', () => {
+  assert.equal(cutCells('short', 22), 'short')
+  assert.equal(cutCells('小螃蟹小一點然後是打招呼的樣子', 8), '小螃蟹…')
+  assert.equal(cutCells('abc😀def', 5), 'abc…')
+  assert.ok(!/[\uD800-\uDBFF]$/.test(cutCells('a😀😀😀', 4).replace('…', '')))
+})
+
+test('prompts sharing a time still draw the rows', async () => {
+  const data = build(parseLines(jsonl([prompt(0, 'one'), assistant(10, 'r1', [{ type: 'text', text: 'a' }]), prompt(0, 'two'), assistant(20, 'r2', [{ type: 'text', text: 'b' }])])), [], true, T0 + 86_400_000)
+  view = await mount(panel, { host: hostOf(answer({ data })) })
+  assert.ok(view.find({ label: 'Trajectory rows' }))
+  assert.ok(drawn('Turn 1 · one'))
+})
+
+test('an open turn stays open when the oldest leaves the list', async () => {
+  const session = (from: number) => build(parseLines(jsonl(Array.from({ length: 4 - from }, (_, k) => [prompt((from + k) * 100, `p${from + k}`), assistant((from + k) * 100 + 5, `r${from + k}`, [{ type: 'text', text: 'ok' }])]).flat())), [], true, T0 + 86_400_000)
+  let data = session(0)
+  const host = mockHost({ capabilities: ['workspace:read', 'agent:read'], requests: { 'trajectory.get': () => answer({ data }) } })
+  view = await mount(panel, { host })
+  const second = `t${T0 + 100}`
+  await view.expand({ label: 'Trajectory rows' }, second)
+  assert.ok(view.expandedOf({ label: 'Trajectory rows' }).includes(second))
+  data = session(1)
+  await view.press({ label: 'Refresh' })
+  assert.ok(view.expandedOf({ label: 'Trajectory rows' }).includes(second))
+  assert.deepEqual(view.errors, [])
+})
+
+test('FIXED says why its categories are missing when the answer left them out', async () => {
+  const data = { ...build(parseLines(jsonl(withShape())), [], true, T0 + 86_400_000), fixed: null, fixedTrimmed: true }
+  view = await mount(panel, { host: hostOf(answer({ data })) })
+  await view.selectItem({ label: 'Trajectory rows' }, 'fixed')
+  assert.ok(drawn('too large to send whole'))
+  assert.ok(!drawn('doesn’t record what it is made of'))
+})
+
+test('an event draws under its own name, with no YOU row, and isn’t counted as a turn', async () => {
+  const data = build(parseLines(jsonl([prompt(0, 'first'), assistant(10, 'r1', [{ type: 'text', text: 'a' }]), prompt(100, '<task-notification>x</task-notification>'), assistant(110, 'r2', [{ type: 'text', text: 'b' }])])), [], true, T0 + 86_400_000)
+  view = await mount(panel, { host: hostOf(answer({ data })) })
+  assert.ok(drawn('Background task'))
+  assert.ok(!drawn('(empty prompt)'))
+  assert.ok(drawn('1 turn · 2 requests'))
+  assert.deepEqual(view.errors, [])
+})
+
+test('a FIXED category opens to what is in it', async () => {
+  view = await mount(panel, { host: hostOf(answer({ data: build(parseLines(jsonl(withShape())), [], true, T0 + 86_400_000) })) })
+  await view.selectItem({ label: 'Trajectory rows' }, 'fixed')
+  await view.expand({ label: 'Fixed overhead by category' }, 'tools/Built-in tools')
+  assert.ok(view.expandedOf({ label: 'Fixed overhead by category' }).includes('tools/Built-in tools'))
+  assert.ok(drawn('Bash'))
+  assert.deepEqual(view.errors, [])
+  assert.deepEqual(view.refusals, [])
 })

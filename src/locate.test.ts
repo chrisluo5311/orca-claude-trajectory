@@ -3,7 +3,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { claudeHome, listSessions, projectDirName, readCapped, readSubagents, TranscriptCache, within } from './locate.ts'
-import { assistant, basicSession, jsonl, prompt, toolUse } from './fixtures.ts'
+import { LIMITS } from './transcript.ts'
+import { assistant, attachment, basicSession, jsonl, prompt, toolUse } from './fixtures.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
 const S2 = '22222222-2222-4222-8222-222222222222'
@@ -118,4 +119,46 @@ test('reads subagents linked to wanted calls only', async () => {
   assert.equal(got[0].agentType, 'Explore')
   assert.equal(got[0].records.length, 1)
   assert.deepEqual(await readSubagents(realpathSync(root), realpathSync(dir()), '../escape', new Set(['toolu_ag'])), [])
+})
+
+test('follows an agent a subagent started, however new its file', async () => {
+  const sub = join(dir(), S1, 'subagents')
+  mkdirSync(sub, { recursive: true })
+  const write = (name: string, toolUseId: string, lines: unknown[]): void => {
+    writeFileSync(join(sub, `agent-${name}.meta.json`), JSON.stringify({ agentType: 'Explore', toolUseId }))
+    writeFileSync(join(sub, `agent-${name}.jsonl`), jsonl(lines))
+  }
+  write('top', 'toolu_top', [assistant(0, 'a', [toolUse('toolu_inner', 'Agent', { description: 'inner' })])])
+  write('inner', 'toolu_inner', [assistant(1, 'b', [toolUse('toolu_read', 'Read', { file_path: '/a' })])])
+  write('other', 'toolu_other_session', [assistant(2, 'c', [toolUse('toolu_x', 'Read', { file_path: '/b' })])])
+  const got = await readSubagents(realpathSync(root), realpathSync(dir()), S1, new Set(['toolu_top']))
+  assert.deepEqual(got.map((a) => a.toolUseId).sort(), ['toolu_inner', 'toolu_top'])
+})
+
+test('a session past the record cap no longer claims to start at its start', async () => {
+  const was = LIMITS.records
+  LIMITS.records = 3
+  try {
+    const file = join(dir(), `${S1}.jsonl`)
+    writeFileSync(file, jsonl([prompt(0, 'a'), prompt(1, 'b')]))
+    const cache = new TranscriptCache()
+    assert.equal((await cache.read(file)).complete, true)
+    appendFileSync(file, jsonl([prompt(2, 'c'), prompt(3, 'd')]))
+    const grown = await cache.read(file)
+    assert.equal(grown.records.length, 3)
+    assert.equal(grown.complete, false)
+    assert.equal((await new TranscriptCache().read(file)).complete, false)
+  } finally {
+    LIMITS.records = was
+  }
+})
+
+test('context after the first reply is not kept', async () => {
+  const file = join(dir(), `${S1}.jsonl`)
+  const ctx = attachment('environment', 'on a mac')
+  writeFileSync(file, jsonl([ctx, prompt(0, 'a'), assistant(5, 'r1', [{ type: 'text', text: 'ok' }]), ctx]))
+  const cache = new TranscriptCache()
+  assert.equal((await cache.read(file)).records.filter((r) => r.k === 'ctx').length, 1)
+  appendFileSync(file, jsonl([ctx]))
+  assert.equal((await cache.read(file)).records.filter((r) => r.k === 'ctx').length, 1)
 })

@@ -6,9 +6,10 @@
 
 An [Orca](https://github.com/stablyai/orca) sidebar panel that shows what a [Claude Code](https://claude.com/claude-code) session did, request by request, oldest first:
 
-- **FIXED**: what every request carries before the conversation (system prompt, tool definitions, memory files), estimated from the first request.
-- **Turn N**: each prompt you typed (**YOU**), each request Claude Code sent the model (**CLAUDE**, with input/output tokens, cache hit, time to first block, duration and end-to-end tok/s), and the tool calls each request made (**TOOL**, or **AGENT** with the subagent's own calls under it).
-- **Lanes**: Input, Model, Tools and Agents drawn in order, or in time with **Duration**.
+- **FIXED**: what every request carries before the conversation, estimated from the first request. Select it to open it by category: system prompt, built-in tools, MCP tools by server, MCP instructions, memory files, skills, agents, deferred tool names.
+- **Turn N**: each prompt you typed (**YOU**), each request Claude Code sent the model (**CLAUDE**, with input/output tokens, cache hit, time to first block, duration and end-to-end tok/s), and the tool calls each request made (**TOOL**, or **AGENT** with the subagent's own calls under it). Requests that a background event started rather than a prompt (a finished task, a CI event) sit in a group of their own, not numbered as a turn.
+- **Lanes**: Input, Model, Tools and Agents drawn in order, or in time with **To time**.
+- **Toolbar**: fold or open every turn at once, and leave out **Calls** or **Subcalls**. A folded turn still says what its prompt was. Calls made by an agent that another subagent started show under the first Agent call, and say which agent made them.
 - **Details**: select a row for its Summary, Input, Result or Timing.
 - **Export**: saves the trajectory as text (figures, tools and what they were about; no prompt, reply, input or output text).
 
@@ -25,7 +26,7 @@ Claude Code writes each session to `~/.claude/projects/<folder>/<session-id>.jso
 Squad-chat measured requests as they streamed. Here they are rebuilt from the transcript, so:
 
 - A request's start is when Claude Code logged it, and "first block" is when its first content block was written whole: later than the first token. So speed is shown end to end (output tokens over the whole request), not as generation speed.
-- The fixed overhead is an estimate: the first request's input less what its prompt added.
+- The fixed overhead is an estimate: the first request's input less what its prompt added. Its categories share that figure out by the size of each part's text, from the transcript's `api-request-shape` and `attachment` lines. Only names and sizes are read from those, and a session whose transcript has no such lines shows the total alone.
 - A prompt's and a tool result's tokens are the next request's growth, spread by size.
 
 ## Install
@@ -57,7 +58,7 @@ The panel shows parts of your own transcripts, which can hold secrets. What the 
 - **Only sessions that ran there.** A session is shown for a workspace only when its transcript says it ran in that workspace's folder.
 - **Short, masked previews.** The panel gets at most 200 characters of a prompt or reply, 8 input fields of 160 characters, and 3 lines of a result. Anything that looks like a secret (API keys, tokens, private keys, passwords in URLs, `*_SECRET=` assignments, JWTs) is hidden whole. Control characters and bidi overrides are stripped.
 - **No HTML.** The panel is a components panel: Orca draws every control, so transcript text can only appear as text. It renders no Markdown, links or images from transcripts.
-- **Bounded work.** At most the newest 32 MiB of a transcript, 4 MiB per subagent, 60 requests, and a 384 KiB answer are read or sent. The secret patterns are bounded against slow-regex input.
+- **Bounded work.** At most the newest 32 MiB of a transcript, 4 MiB per subagent, 60 requests, 200 names per FIXED category, and a 384 KiB answer are read or sent. The secret patterns are bounded against slow-regex input.
 
 Masking is a best effort, not a guarantee: don't share screenshots of the panel without looking at them first. Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 

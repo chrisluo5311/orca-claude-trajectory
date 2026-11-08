@@ -15,6 +15,7 @@ import { constants, promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { cwdOf, LIMITS, parseLines, titleOf, type Rec, type Subagent } from './transcript.ts'
+import { isAgentTool } from './format.ts'
 import type { SessionInfo } from './protocol.ts'
 
 export const CAPS = {
@@ -206,7 +207,7 @@ export async function listSessions(home: string, cwd: string): Promise<{ root: s
 }
 
 /** The subagents of a session: each one's Agent call id, type, and records. */
-export async function readSubagents(root: string, dir: string, sessionId: string, wanted: ReadonlySet<string>): Promise<Subagent[]> {
+export async function readSubagents(root: string, dir: string, sessionId: string, mainCalls: ReadonlySet<string>): Promise<Subagent[]> {
   if (!SESSION_ID.test(sessionId)) return []
   const sub = await safeEntry(root, join(dir, sessionId, 'subagents'), 'dir')
   if (!sub) return []
@@ -225,35 +226,61 @@ export async function readSubagents(root: string, dir: string, sessionId: string
     if (st) metas.push({ meta, jsonl, mtime: st.mtimeMs, size: st.size })
   }
   metas.sort((a, b) => b.mtime - a.mtime)
-  const out: Subagent[] = []
+  // What each file says started it, whether or not it turns out to be wanted.
+  const started: { m: (typeof metas)[number]; toolUseId: string; agentType: string | null }[] = []
   for (const m of metas.slice(0, CAPS.subagents)) {
     try {
-      const key = `${m.mtime}:${m.size}`
-      const hit = agents.get(m.jsonl)
-      if (hit?.key === key) {
-        if (wanted.has(hit.agent.toolUseId)) out.push(hit.agent)
-        continue
+      let said = metasRead.get(m.meta)
+      if (!said) {
+        const meta: unknown = JSON.parse((await readCapped(m.meta, CAPS.metaBytes, 'start')).text)
+        if (typeof meta !== 'object' || meta === null) continue
+        const { toolUseId, agentType } = meta as Record<string, unknown>
+        if (typeof toolUseId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(toolUseId)) continue
+        said = { toolUseId, agentType: typeof agentType === 'string' && /^[A-Za-z0-9_:.-]{1,60}$/.test(agentType) ? agentType : null }
+        metasRead.set(m.meta, said)
+        if (metasRead.size > CAPS.subagents * 4) metasRead.delete(metasRead.keys().next().value!)
       }
-      const meta: unknown = JSON.parse((await readCapped(m.meta, CAPS.metaBytes, 'start')).text)
-      if (typeof meta !== 'object' || meta === null) continue
-      const { toolUseId, agentType } = meta as Record<string, unknown>
-      if (typeof toolUseId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(toolUseId) || !wanted.has(toolUseId)) continue
-      const { text } = await readCapped(m.jsonl, CAPS.subagentBytes, 'end')
-      const agent: Subagent = {
-        toolUseId,
-        agentType: typeof agentType === 'string' && /^[A-Za-z0-9_:.-]{1,60}$/.test(agentType) ? agentType : null,
-        records: parseSidechain(text)
-      }
-      agents.delete(m.jsonl)
-      agents.set(m.jsonl, { key, agent })
-      if (agents.size > CAPS.subagents * 2) agents.delete(agents.keys().next().value!)
-      out.push(agent)
+      started.push({ m, ...said })
     } catch {
       /* an unreadable subagent is left out */
     }
   }
+  // Agents the main loop started, then any those started: an Agent call can sit in a subagent's own file.
+  const wanted = new Set(mainCalls)
+  const out: Subagent[] = []
+  const left = new Set(started)
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const s of left) {
+      if (!wanted.has(s.toolUseId)) continue
+      left.delete(s)
+      grew = true
+      try {
+        const agent = await readAgent(s.m, s.toolUseId, s.agentType)
+        out.push(agent)
+        for (const r of agent.records) if (r.k === 'asst') for (const t of r.tools) if (isAgentTool(t.tool)) wanted.add(t.id)
+      } catch {
+        /* an unreadable subagent is left out */
+      }
+    }
+  }
   return out
 }
+
+async function readAgent(m: { jsonl: string; mtime: number; size: number }, toolUseId: string, agentType: string | null): Promise<Subagent> {
+  const key = `${m.mtime}:${m.size}`
+  const hit = agents.get(m.jsonl)
+  if (hit?.key === key) return hit.agent
+  const { text } = await readCapped(m.jsonl, CAPS.subagentBytes, 'end')
+  const agent: Subagent = { toolUseId, agentType, records: parseSidechain(text) }
+  agents.delete(m.jsonl)
+  agents.set(m.jsonl, { key, agent })
+  if (agents.size > CAPS.subagents * 2) agents.delete(agents.keys().next().value!)
+  return agent
+}
+
+// What a subagent's meta file says started it, which doesn't change once written.
+const metasRead = new Map<string, { toolUseId: string; agentType: string | null }>()
 
 // Subagent transcripts already read, by file, size and time.
 const agents = new Map<string, { key: string; agent: Subagent }>()
@@ -265,7 +292,18 @@ function parseSidechain(text: string): Rec[] {
 
 // ---------------------------------------------------------------- a growing transcript
 
-type Cached = { file: string; ino: number; size: number; complete: boolean; records: Rec[] }
+type Cached = { file: string; ino: number; size: number; complete: boolean; replied: boolean; records: Rec[] }
+
+// Context lines only tell what came with the first request, so those after its
+// reply aren't kept: they would push real records out. Says whether a reply came.
+function dropLateContext(records: Rec[], replied: boolean): { records: Rec[]; replied: boolean } {
+  const out: Rec[] = []
+  for (const r of records) {
+    if (r.k === 'asst') replied = true
+    if (r.k !== 'ctx' || !replied) out.push(r)
+  }
+  return { records: out, replied }
+}
 
 /**
  * Reads a session's records, keeping what it read: a file that only grew is
@@ -283,17 +321,25 @@ export class TranscriptCache {
         const added = await readRange(file, e.size, st.size)
         // Only whole lines: a line still being written is read next time.
         const end = added.lastIndexOf('\n') + 1
-        e.records.push(...parseLines(added.toString('utf8', 0, end)))
-        if (e.records.length > LIMITS.records) e.records.splice(0, e.records.length - LIMITS.records)
+        const fresh = dropLateContext(parseLines(added.toString('utf8', 0, end)), e.replied)
+        e.replied = fresh.replied
+        e.records.push(...fresh.records)
+        if (e.records.length > LIMITS.records) {
+          // The session's start is gone now: its first request can't be told.
+          e.records.splice(0, e.records.length - LIMITS.records)
+          e.complete = false
+        }
         e.size += end
       }
       return { records: e.records, complete: e.complete }
     }
-    const { text, complete, size } = await readCapped(file, CAPS.transcriptBytes, 'end')
+    const { text, complete: whole0, size } = await readCapped(file, CAPS.transcriptBytes, 'end')
     const whole = text.slice(0, text.lastIndexOf('\n') + 1)
-    const records = parseLines(whole).slice(-LIMITS.records)
+    const parsed = dropLateContext(parseLines(whole), false)
+    const complete = whole0 && parsed.records.length <= LIMITS.records
+    const records = parsed.records.slice(-LIMITS.records)
     const consumed = size - Buffer.byteLength(text.slice(whole.length), 'utf8')
-    this.entry = { file, ino: st.ino, size: consumed, complete, records }
+    this.entry = { file, ino: st.ino, size: consumed, complete, replied: parsed.replied, records }
     return { records, complete }
   }
 

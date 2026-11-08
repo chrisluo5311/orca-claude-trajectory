@@ -4,7 +4,7 @@
 // Claude was sent (CLAUDE), and the tool calls each request made (TOOL, AGENT
 // with its own calls under it). Selecting a row opens its details under the
 // list. Lanes above the rows draw the same events in order, or in time with
-// Duration.
+// To time.
 //
 // A components panel: Orca draws every control itself and the panel has no
 // DOM, so transcript text can only ever appear as text.
@@ -12,6 +12,7 @@
 import {
   atom,
   Box,
+  Button,
   Callout,
   Card,
   CodeView,
@@ -42,8 +43,8 @@ import {
   type Tone,
   type TreeItem
 } from 'orca'
-import type { Call, Step, SubCall, Trajectory, TrajectoryAnswer, Turn } from './protocol.ts'
-import { isAgentTool, kTok, plural, stamp, stepMs, took, trajectoryText } from './format.ts'
+import type { Call, FixedItem, Step, SubCall, Trajectory, TrajectoryAnswer, Turn } from './protocol.ts'
+import { cutCells, isAgentTool, kTok, plural, stamp, stepMs, took, trajectoryText, turnName } from './format.ts'
 
 // ---------------------------------------------------------------- state
 
@@ -57,6 +58,8 @@ const tabOf = atom<Record<string, string>>('tabs', {})
 /** Rows opened in the list; null until the person opens or closes one. */
 const expanded = atom<string[] | null>('expanded', null)
 const duration = atom('duration', false, { persist: 'plugin' })
+const showCalls = atom('showCalls', true, { persist: 'plugin' })
+const showSubcalls = atom('showSubcalls', true, { persist: 'plugin' })
 
 let seq = 0
 
@@ -69,6 +72,9 @@ async function refresh(): Promise<void> {
     const was = read(answer)
     if (was && (was.sessionId !== got.sessionId || was.workspaceId !== got.workspaceId)) {
       set(selected, null)
+      set(expanded, null)
+    } else if (was?.data && got.data && was.data.turns.at(-1)?.at !== got.data.turns.at(-1)?.at) {
+      // A new turn opens, and the ones before fold. An answer with no data says nothing about that.
       set(expanded, null)
     }
     set(answer, got)
@@ -132,38 +138,60 @@ function figures(...parts: (string | null | undefined | false)[]): string | unde
   return s || undefined
 }
 
-// The rows as a tree, and each row by its key for the details.
-function rows(t: Trajectory, now: number): { items: TreeItem[]; byKey: Map<string, Row>; open: string[] } {
+// Each turn's key, by when it started: its place in the list shifts as old ones
+// leave. Two prompts can share a time, and a Tree's keys must be unique.
+function turnKeys(t: Trajectory): string[] {
+  const seen = new Map<number, number>()
+  return t.turns.map((turn) => {
+    const n = seen.get(turn.at) ?? 0
+    seen.set(turn.at, n + 1)
+    return n ? `t${turn.at}-${n}` : `t${turn.at}`
+  })
+}
+
+// Open until the person says otherwise: the newest turn and its last request.
+function defaultOpen(t: Trajectory): string[] {
+  const key = turnKeys(t).at(-1)
+  if (!key) return []
+  const last = t.turns.at(-1)!.steps.at(-1)
+  return last ? [key, `r${last.n}`] : [key]
+}
+
+const TURN_PROMPT = 22 // cells of a prompt a folded turn says: its figures keep their room in a sidebar
+
+// The rows as a tree, and each row shown by its key for the details.
+function rows(t: Trajectory, now: number, opened: readonly string[]): { items: TreeItem[]; byKey: Map<string, Row> } {
+  const calling = read(showCalls)
+  const subcalling = read(showSubcalls)
   const byKey = new Map<string, Row>()
   const items: TreeItem[] = []
+  const keys = turnKeys(t)
   byKey.set('fixed', { kind: 'fixed' })
   items.push({ key: 'fixed', icon: 'layers', label: `${TAG.fixed}  Fixed overhead`, description: t.overhead != null ? `≈${kTok(t.overhead)}` : undefined })
-  let open: string[] = []
   t.turns.forEach((turn, i) => {
-    const key = `t${i}`
+    const key = keys[i]
     byKey.set(key, { kind: 'turn', turn })
     const children: TreeItem[] = []
-    if (!turn.earlier) {
-      byKey.set(`y${i}`, { kind: 'you', turn })
-      children.push({ key: `y${i}`, icon: 'edit', label: `${TAG.you}  ${turn.prompt || '(empty prompt)'}`, description: figures(kTok(turn.tokens ?? Math.round(turn.chars / 4))) })
+    if (!turn.earlier && !turn.auto) {
+      byKey.set(`y${key}`, { kind: 'you', turn })
+      children.push({ key: `y${key}`, icon: 'edit', label: `${TAG.you}  ${turn.prompt || '(empty prompt)'}`, description: figures(kTok(turn.tokens ?? Math.round(turn.chars / 4))) })
     }
-    let lastStep: string | null = null
     for (const s of turn.steps) {
       if (s.isCompacted) {
         byKey.set(`k${s.n}`, { kind: 'compact', step: s })
         children.push({ key: `k${s.n}`, icon: 'collapse', label: `${TAG.compact}  Context compacted` })
       }
       const sk = `r${s.n}`
-      lastStep = sk
       byKey.set(sk, { kind: 'claude', step: s })
       const live = s.status === 'streaming'
-      const calls: TreeItem[] = s.calls.map((c) => {
+      const calls: TreeItem[] = !calling ? [] : s.calls.map((c) => {
         const ck = `c${c.id}`
         byKey.set(ck, { kind: 'tool', call: c, step: s })
         const agent = isAgentTool(c.tool)
-        const sub: TreeItem[] = c.sub.map((sc) => {
-          byKey.set(`s${sc.id}`, { kind: 'sub', call: sc, parent: c })
-          return { key: `s${sc.id}`, icon: sc.isError ? 'error' : sc.done ? 'hammer' : 'activity', label: `${TAG.sub}  ${sc.tool}${sc.summary ? ` ${sc.summary}` : ''}${sc.isError ? ' ✗' : ''}`, description: figures(sc.done ? took(sc.ms) : took(now - sc.at)) }
+        const sub: TreeItem[] = !subcalling ? [] : c.sub.map((sc) => {
+          // Two Agent calls could list the same id: keyed by the call as well.
+          byKey.set(`s${c.id}/${sc.id}`, { kind: 'sub', call: sc, parent: c })
+          return { key: `s${c.id}/${sc.id}`, icon: sc.isError ? 'error' : sc.done ? 'hammer' : 'activity', label: `${TAG.sub}  ${sc.tool}${sc.summary ? ` ${sc.summary}` : ''}${sc.isError ? ' ✗' : ''}`, description: figures(sc.done ? took(sc.ms) : took(now - sc.at)) }
         })
         const name = agent ? (c.agentType ?? 'Agent') : c.tool
         return {
@@ -184,10 +212,37 @@ function rows(t: Trajectory, now: number): { items: TreeItem[]; byKey: Map<strin
       })
     }
     const span = turn.steps.length ? took((turn.steps.at(-1)!.endedAt ?? now) - (turn.earlier ? turn.steps[0].at : turn.at)) : ''
-    items.push({ key, icon: 'flag', label: turn.earlier ? 'Earlier' : `Turn ${turn.n}`, description: figures(plural(turn.steps.length, 'request'), span), children })
-    if (i === t.turns.length - 1) open = lastStep ? [key, lastStep] : [key]
+    // Folded, a turn still says what it was about.
+    const about = !opened.includes(key) && turn.prompt ? cutCells(turn.prompt, TURN_PROMPT) : null
+    const name = turnName(turn)
+    items.push({ key, icon: turn.auto ? 'activity' : 'flag', label: about ? `${name} · ${about}` : name, description: figures(plural(turn.steps.length, 'request'), span), children })
   })
-  return { items, byKey, open }
+  return { items, byKey }
+}
+
+// ---------------------------------------------------------------- the toolbar
+
+// All the turns folded, or all of them open with their requests.
+function toggleTurns(t: Trajectory, opened: readonly string[]): void {
+  const turns = turnKeys(t)
+  if (turns.some((k) => opened.includes(k))) {
+    set(expanded, opened.filter((k) => !turns.includes(k)))
+    return
+  }
+  set(expanded, [...new Set([...opened, ...turns, ...t.turns.flatMap((x) => x.steps.map((s) => `r${s.n}`))])])
+}
+
+function toolbar(t: Trajectory, opened: readonly string[]) {
+  const anyOpen = turnKeys(t).some((k) => opened.includes(k))
+  return (
+    <Row wrap gap="sm" align="center">
+      <Button size="sm" variant="ghost" icon={anyOpen ? 'collapse' : 'expand'} onPress={() => toggleTurns(t, opened)}>
+        {anyOpen ? 'Fold turns' : 'Open turns'}
+      </Button>
+      <Switch label="Calls" checked={read(showCalls)} onChange={(v) => set(showCalls, v)} />
+      <Switch label="Subcalls" checked={read(showSubcalls)} onChange={(v) => set(showSubcalls, v)} />
+    </Row>
+  )
 }
 
 // ---------------------------------------------------------------- details
@@ -212,22 +267,41 @@ function callStatus(c: SubCall): KeyValueItem {
   return { label: 'Status', value: !c.done ? 'Running' : c.isError ? 'Failed' : 'Completed', tone: !c.done ? 'warning' : c.isError ? 'danger' : undefined }
 }
 
+// A category of the fixed overhead as a tree row, with what's in it under it.
+function fixedRow(x: FixedItem & { note?: string | null }, path: string): TreeItem {
+  const key = `${path}/${x.name}`
+  const children = x.items?.map((c, i) => fixedRow(c, `${key}#${i}`))
+  return { key, label: x.name, description: figures(`≈${kTok(x.tokens)}`, x.note), children }
+}
+
+function fixedDetails(t: Trajectory) {
+  const last = t.turns.flatMap((x) => x.steps).filter((s) => s.input != null).at(-1)
+  const share = t.overhead != null && last?.input ? Math.min(100, Math.round((t.overhead / last.input) * 100)) : null
+  return (
+    <Stack gap="sm">
+      <Text muted size="sm">
+        Sent with every request: the system prompt, the tool definitions, memory files and anything else that comes before the conversation.
+      </Text>
+      {kv([
+        { label: 'Tokens', value: t.overhead != null ? `≈${kTok(t.overhead)}` : 'Unknown' },
+        share != null && { label: 'Last request', value: `${share}% of its input` }
+      ])}
+      {t.fixed ? <Tree label="Fixed overhead by category" items={t.fixed.map((p) => fixedRow(p, p.key))} maxHeight="md" /> : null}
+      <Text muted size="xs">
+        {t.overhead == null
+          ? 'The start of this session is past what was read, so it cannot be estimated.'
+          : t.fixed
+            ? 'Estimated from the first request: its input less what its prompt added, shared out by the size of each part.'
+            : t.fixedTrimmed
+              ? 'Estimated from the first request: its input less what its prompt added. Its categories are left out because this session is too large to send whole.'
+              : 'Estimated from the first request: its input less what its prompt added. This transcript doesn’t record what it is made of.'}
+      </Text>
+    </Stack>
+  )
+}
+
 function details(key: string, r: Row, t: Trajectory, now: number) {
-  if (r.kind === 'fixed') {
-    return (
-      <Stack gap="sm">
-        <Text muted size="sm">
-          Sent with every request: the system prompt, the tool definitions, memory files and anything else that comes before the conversation.
-        </Text>
-        {kv([{ label: 'Tokens', value: t.overhead != null ? `≈${kTok(t.overhead)}` : 'Unknown' }])}
-        <Text muted size="xs">
-          {t.overhead != null
-            ? 'Estimated from the first request: its input less what its prompt added.'
-            : 'The start of this session is past what was read, so it cannot be estimated.'}
-        </Text>
-      </Stack>
-    )
-  }
+  if (r.kind === 'fixed') return fixedDetails(t)
   if (r.kind === 'turn') {
     const s = r.turn.steps
     return kv([
@@ -282,7 +356,7 @@ function details(key: string, r: Row, t: Trajectory, now: number) {
   if (r.kind === 'sub') {
     const c = r.call
     return kv([
-      { label: 'Inside', value: `${r.parent.agentType ?? 'Agent'}${r.parent.summary ? ` · ${r.parent.summary}` : ''}`, tone: 'success' },
+      { label: 'Inside', value: `${c.by ? `${c.by}, started under ` : ''}${r.parent.agentType ?? 'Agent'}${r.parent.summary ? ` · ${r.parent.summary}` : ''}`, tone: 'success' },
       callStatus(c),
       { label: 'Started', value: stamp(c.at) },
       { label: 'Duration', value: c.done ? took(c.ms) : took(now - c.at) }
@@ -514,16 +588,17 @@ export default function Panel() {
       </Stack>
     )
   }
-  const { items, byKey, open } = rows(t, now)
+  const opened = read(expanded) ?? defaultOpen(t)
+  const { items, byKey } = rows(t, now, opened)
   const sel = read(selected)
   const row = sel ? byKey.get(sel) : undefined
-  const opened = read(expanded) ?? open
   return (
     <Stack gap="md">
       {header}
       {pickers}
       {err ? <Callout tone="danger">{err}</Callout> : null}
       {t.requests ? lanes(t, now) : null}
+      {t.requests ? toolbar(t, opened) : null}
       <Tree
         label="Trajectory rows"
         items={items}
@@ -536,7 +611,7 @@ export default function Panel() {
       {row && sel ? <Card title={cardTitle(row)}>{details(sel, row, t, now)}</Card> : null}
       <Stack gap="xs">
         <Text muted size="xs">
-          {[plural(t.turns.filter((x) => !x.earlier).length, 'turn'), plural(t.requests, 'request'), plural(t.calls, 'call'), t.tps ? `${t.tps} tok/s end to end` : null].filter(Boolean).join(' · ')}
+          {[plural(t.turns.filter((x) => !x.earlier && !x.auto).length, 'turn'), plural(t.requests, 'request'), plural(t.calls, 'call'), t.tps ? `${t.tps} tok/s end to end` : null].filter(Boolean).join(' · ')}
         </Text>
         {t.next != null ? (
           <Text muted size="xs">
@@ -558,7 +633,7 @@ function cardTitle(r: Row): string {
     case 'fixed':
       return 'Fixed overhead'
     case 'turn':
-      return r.turn.earlier ? 'Earlier' : `Turn ${r.turn.n}`
+      return turnName(r.turn)
     case 'you':
       return 'Your prompt'
     case 'compact':

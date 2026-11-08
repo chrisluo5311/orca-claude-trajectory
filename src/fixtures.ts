@@ -40,3 +40,35 @@ export function basicSession(): unknown[] {
     assistant(3500, 'r2', [{ type: 'text', text: 'Fixed.' }], { input_tokens: 2, output_tokens: 300, cache_read_input_tokens: 20500, cache_creation_input_tokens: 0 }, 'end_turn', 'req-b')
   ]
 }
+
+export const requestShape = (hash: string, tools: object[] = []) => ({
+  type: 'api-request-shape',
+  shapeHash: hash,
+  shape: { system: [{ type: 'text', text: 'SYSTEM-WORDS '.repeat(200) }], tools }
+})
+const toolDef = (name: string, words: number) => ({ name, description: 'TOOL-WORDS '.repeat(words), input_schema: { type: 'object' } })
+export const attachment = (type: string, rendered: string, extra: object = {}) => ({
+  type: 'attachment',
+  timestamp: iso(1),
+  attachment: { type, ...extra },
+  rendered: [{ content: rendered }]
+})
+
+/** The basic session with the lines that say what its first request was made of. */
+export function withShape(): unknown[] {
+  const skills = `- long-skill: ${'SKILL-WORDS '.repeat(40)}\n- short:skill`
+  const [title, firstPrompt, firstRequest, ...rest] = basicSession()
+  return [
+    title,
+    requestShape('h1', [toolDef('Read', 20), toolDef('Bash', 90), toolDef('mcp__figma__use_figma', 60), toolDef('mcp__1a59c906-aaaa-bbbb-cccc-1234567890ab__batch', 10)]),
+    attachment('skill_listing', skills, { content: skills, names: ['long-skill', 'short:skill'] }),
+    attachment('mcp_instructions_delta', 'SERVER-WORDS '.repeat(30), { addedNames: ['figma'], addedBlocks: ['SERVER-WORDS '.repeat(30)] }),
+    attachment('agent_listing_delta', '- Explore: looks around', { addedTypes: ['Explore'], addedLines: ['- Explore: looks around'] }),
+    attachment('deferred_tools_delta', 'one\ntwo', { addedNames: ['one', 'two'] }),
+    attachment('instructions', 'MEMORY-WORDS '.repeat(50), { files: [{ path: '/work/app/CLAUDE.md', type: 'Project', content: 'MEMORY-WORDS '.repeat(50) }] }),
+    attachment('environment', 'on a mac'),
+    firstPrompt,
+    { ...(firstRequest as object), shapeHash: 'h1' },
+    ...rest
+  ]
+}
