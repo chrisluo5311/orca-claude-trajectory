@@ -1,5 +1,9 @@
 # Claude Trajectory for Orca
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+![Claude Trajectory](docs/images/cover.png)
+
 An [Orca](https://github.com/stablyai/orca) sidebar panel that shows what a [Claude Code](https://claude.com/claude-code) session did, request by request, oldest first:
 
 - **FIXED**: what every request carries before the conversation (system prompt, tool definitions, memory files), estimated from the first request.

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Cover · Light</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1600px; height: 1000px; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased;
+    background: radial-gradient(800px 600px at 85% 20%, #f8ddd0 0%, transparent 70%), radial-gradient(700px 500px at 10% 100%, #f1e9dc 0%, transparent 70%), #faf8f5;
+    color: #1f1e1d;
+  }
+  .grid { position: absolute; inset: 0; background-image: linear-gradient(#ece6dd 1px, transparent 1px), linear-gradient(90deg, #ece6dd 1px, transparent 1px); background-size: 40px 40px; mask-image: radial-gradient(900px 700px at 70% 50%, #000 0%, transparent 75%); opacity: .7; }
+  .copy { position: absolute; left: 110px; top: 210px; width: 680px; }
+  .tag { display: inline-flex; align-items: center; gap: 10px; padding: 8px 16px; border-radius: 999px; background: #fff; border: 1px solid #e8e1d6; font-size: 18px; font-weight: 600; color: #4a4540; box-shadow: 0 2px 6px rgba(60,40,20,.05); }
+  .tag i { width: 9px; height: 9px; border-radius: 50%; background: #d97757; }
+  h1 { font-size: 112px; font-weight: 750; letter-spacing: -0.035em; line-height: 1; margin-top: 30px; }
+  h1 span { color: #d97757; }
+  .crab { display: inline-block; margin-left: 22px; vertical-align: 8px; filter: drop-shadow(0 6px 10px rgba(217,119,87,.28)); }
+  p { font-size: 32px; line-height: 1.45; color: #6b6560; margin-top: 26px; }
+  .stats { display: flex; gap: 14px; margin-top: 54px; }
+  .stat { background: #fff; border: 1px solid #ebe4da; border-radius: 16px; padding: 18px 22px; min-width: 150px; box-shadow: 0 6px 18px rgba(60,40,20,.05); }
+  .stat b { display: block; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
+  .stat small { font-size: 16px; color: #8a837b; }
+  .panel { position: absolute; left: 927px; top: 228px; width: 540px; transform: perspective(1800px) rotateY(-12deg) rotateX(5deg) rotateZ(1deg) scale(1.25); transform-origin: center; background: #fff; border: 1px solid #ebe4da; border-radius: 22px; box-shadow: 7px 9px 0 -1px #ece4d9, 8px 11px 0 -1px #ddd2c4, inset 0 1px 0 rgba(255,255,255,.9), 0 2px 4px rgba(80,50,30,.06), 0 14px 28px rgba(80,50,30,.11), -24px 48px 80px rgba(80,50,30,.18), -50px 100px 160px rgba(80,50,30,.16); padding: 26px; }
+  .ph { display: flex; justify-content: space-between; align-items: center; font-size: 22px; font-weight: 700; }
+  .ph em { font-style: normal; font-size: 14px; font-weight: 600; color: #1f9d5c; background: #e6f6ed; padding: 5px 10px; border-radius: 999px; }
+  .lanes { margin-top: 22px; display: grid; grid-template-columns: 70px 1fr; row-gap: 12px; align-items: center; font-size: 14.5px; color: #8a837b; }
+  .tr { position: relative; height: 14px; background: #f3efe9; border-radius: 7px; }
+  .tr b { position: absolute; top: 0; height: 14px; border-radius: 7px; background: var(--c); }
+  .rows { margin-top: 24px; border-top: 1px solid #f0ebe3; padding-top: 10px; }
+  .r { display: flex; align-items: center; gap: 12px; height: 46px; font-size: 17px; white-space: nowrap; }
+  .r .k { font-size: 12.5px; font-weight: 700; letter-spacing: .06em; padding: 4px 9px; border-radius: 6px; flex: none; }
+  .r .t { overflow: hidden; text-overflow: ellipsis; color: #2e2b28; }
+  .r .m { margin-left: auto; color: #958d84; font-size: 15px; font-variant-numeric: tabular-nums; flex: none; padding-left: 10px; }
+  .you { background: #efebe4; color: #3d3a36; } .cl { background: #fbe9e1; color: #c0603e; } .tl { background: #fff3df; color: #b06d00; } .ag { background: #efe9ff; color: #6a46d8; } .er { background: #ffe9e7; color: #cf3b30; }
+  .sel { background: #fdf3ee; border-radius: 10px; margin: 0 -10px; padding: 0 10px; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 15px; }
+</style></head><body>
+<div class="grid"></div>
+<section class="copy">
+  <span class="tag"><i></i>Orca plugin for Claude Code</span>
+  <h1>Claude<svg class="crab" viewBox="0 0 15 9" width="120" height="72" shape-rendering="crispEdges" aria-hidden="true"><g fill="#d97757"><rect x="1" y="2" width="9" height="5"/><rect x="0" y="4" width="1" height="2"/><rect x="10" y="3" width="1" height="2"/><rect x="11" y="2" width="1" height="2"/><rect x="11" y="0" width="2" height="2"/><rect x="1.5" y="7" width="1" height="2"/><rect x="3.5" y="7" width="1" height="2"/><rect x="6.5" y="7" width="1" height="2"/><rect x="8.5" y="7" width="1" height="2"/></g><g fill="#1f1e1d"><rect x="3" y="3" width="1" height="2"/><rect x="7" y="3" width="1" height="2"/></g><g fill="#eeb39d"><rect x="14" y="0" width="0.6" height="1"/><rect x="14" y="2" width="0.6" height="1"/><rect x="13.4" y="3.5" width="0.6" height="0.6"/></g></svg><br><span>Trajectory</span></h1>
+  <p>Trace every turn.<br>Troubleshoot every tool call.</p>
+  <div class="stats">
+    <div class="stat"><b>44</b><small>requests</small></div>
+    <div class="stat"><b>61</b><small>tool calls</small></div>
+    <div class="stat"><b>92%</b><small>cache hits</small></div>
+  </div>
+</section>
+<section class="panel">
+  <div class="ph">Claude Trajectory <em>● Live</em></div>
+  <div class="lanes">
+    <span>Input</span><div class="tr"><b style="--c:#3d3a36;left:0;width:3%"></b><b style="--c:#f0a020;left:30%;width:3%"></b><b style="--c:#f0a020;left:58%;width:3%"></b><b style="--c:#3d3a36;left:86%;width:3%"></b></div>
+    <span>Model</span><div class="tr"><b style="--c:#d97757;left:4%;width:22%"></b><b style="--c:#d97757;left:34%;width:14%"></b><b style="--c:#d97757;left:62%;width:10%"></b><b style="--c:#d97757;left:89%;width:11%"></b></div>
+    <span>Tools</span><div class="tr"><b style="--c:#f0a020;left:26%;width:4%"></b><b style="--c:#8a63f0;left:48%;width:10%"></b><b style="--c:#ef5146;left:73%;width:4%"></b><b style="--c:#f0a020;left:78%;width:7%"></b></div>
+  </div>
+  <div class="rows">
+    <div class="r"><span class="k you">YOU</span><span class="t">Add rate limiting to the public API</span><span class="m">24</span></div>
+    <div class="r"><span class="k cl">CLAUDE #41</span><span class="t">I'll look at how requests reach the router…</span><span class="m">412 · 3.1s</span></div>
+    <div class="r"><span class="k tl">TOOL</span><span class="t"><code>Grep "app.use" src/</code></span><span class="m">0.2s</span></div>
+    <div class="r sel"><span class="k cl">CLAUDE #42</span><span class="t">Two places need limits. I'll check both…</span><span class="m">1.2k · 9.4s</span></div>
+    <div class="r"><span class="k ag">AGENT</span><span class="t">Explore · find existing middleware</span><span class="m">6 calls · 18s</span></div>
+    <div class="r"><span class="k cl">CLAUDE #43</span><span class="t">Now the limiter, with a sliding window…</span><span class="m">2.4k · 21s</span></div>
+    <div class="r"><span class="k er">TOOL</span><span class="t"><code>Bash npm test</code></span><span class="m" style="color:#cf3b30">exit 1</span></div>
+  </div>
+</section>
+</body></html>
