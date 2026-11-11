@@ -2,11 +2,12 @@
   "manifestVersion": 2,
   "id": "claude-trajectory",
   "name": "Claude Trajectory",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "repository": "https://github.com/chrisluo5311/orca-claude-trajectory",
   "description": "What a Claude Code session did, request by request: prompts, model requests, tool calls and subagents, with tokens and timing. Reads transcripts locally, read-only.",
   "author": { "name": "chrisluo5311", "url": "https://github.com/chrisluo5311" },
   "license": "MIT",
+  "cover": { "path": "docs/images/listing-cover.png", "alt": "Claude Trajectory: the panel listing a session's prompts, Claude's requests and tool calls, with lanes for input, model and tools above" },
   "engines": {
     "orca": ">=1.4.248"
   },
