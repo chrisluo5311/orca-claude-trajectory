@@ -8,7 +8,7 @@
   "author": { "name": "chrisluo5311", "url": "https://github.com/chrisluo5311" },
   "license": "MIT",
   "engines": {
-    "orca": ">=1.4.247"
+    "orca": ">=1.4.248"
   },
   "execution": "trusted-worker",
   "pluginApi": 1,

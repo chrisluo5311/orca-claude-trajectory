@@ -31,7 +31,7 @@ Squad-chat measured requests as they streamed. Here they are rebuilt from the tr
 
 ## Install
 
-Orca 1.4.247 or newer.
+Orca 1.4.248 or newer.
 
 ```sh
 orca plugin install https://github.com/chrisluo5311/orca-claude-trajectory   # once published
