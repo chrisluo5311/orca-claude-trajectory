@@ -133,6 +133,12 @@ type Row =
 
 const TAG: Record<string, string> = { fixed: 'FIXED', you: 'YOU', claude: 'CLAUDE', tool: 'TOOL', agent: 'AGENT', compact: 'COMPACT', sub: 'TOOL' }
 
+// What kind of row it is, in colour. Orca draws a Tree row's `icon` in the text
+// colour and a row takes no tone, so an emoji leading the label is the only
+// colour a row can carry. Each has emoji presentation by default (no variation
+// selector), so it draws in colour wherever there is a colour emoji font.
+const GLYPH = { fixed: '📚', turn: '🚩', event: '⚡', you: '💬', compact: '📦', claude: '🤖', tool: '🔧', sub: '🔨', agent: '🚀', running: '⏳', error: '❌' } as const
+
 function figures(...parts: (string | null | undefined | false)[]): string | undefined {
   const s = parts.filter(Boolean).join(' · ')
   return s || undefined
@@ -167,19 +173,19 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
   const items: TreeItem[] = []
   const keys = turnKeys(t)
   byKey.set('fixed', { kind: 'fixed' })
-  items.push({ key: 'fixed', icon: 'layers', label: `${TAG.fixed}  Fixed overhead`, description: t.overhead != null ? `≈${kTok(t.overhead)}` : undefined })
+  items.push({ key: 'fixed', label: `${GLYPH.fixed} ${TAG.fixed}  Fixed overhead`, description: t.overhead != null ? `≈${kTok(t.overhead)}` : undefined })
   t.turns.forEach((turn, i) => {
     const key = keys[i]
     byKey.set(key, { kind: 'turn', turn })
     const children: TreeItem[] = []
     if (!turn.earlier && !turn.auto) {
       byKey.set(`y${key}`, { kind: 'you', turn })
-      children.push({ key: `y${key}`, icon: 'edit', label: `${TAG.you}  ${turn.prompt || '(empty prompt)'}`, description: figures(kTok(turn.tokens ?? Math.round(turn.chars / 4))) })
+      children.push({ key: `y${key}`, label: `${GLYPH.you} ${TAG.you}  ${turn.prompt || '(empty prompt)'}`, description: figures(kTok(turn.tokens ?? Math.round(turn.chars / 4))) })
     }
     for (const s of turn.steps) {
       if (s.isCompacted) {
         byKey.set(`k${s.n}`, { kind: 'compact', step: s })
-        children.push({ key: `k${s.n}`, icon: 'collapse', label: `${TAG.compact}  Context compacted` })
+        children.push({ key: `k${s.n}`, label: `${GLYPH.compact} ${TAG.compact}  Context compacted` })
       }
       const sk = `r${s.n}`
       byKey.set(sk, { kind: 'claude', step: s })
@@ -191,13 +197,12 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
         const sub: TreeItem[] = !subcalling ? [] : c.sub.map((sc) => {
           // Two Agent calls could list the same id: keyed by the call as well.
           byKey.set(`s${c.id}/${sc.id}`, { kind: 'sub', call: sc, parent: c })
-          return { key: `s${c.id}/${sc.id}`, icon: sc.isError ? 'error' : sc.done ? 'hammer' : 'activity', label: `${TAG.sub}  ${sc.tool}${sc.summary ? ` ${sc.summary}` : ''}${sc.isError ? ' ✗' : ''}`, description: figures(sc.done ? took(sc.ms) : took(now - sc.at)) }
+          return { key: `s${c.id}/${sc.id}`, label: `${sc.isError ? GLYPH.error : sc.done ? GLYPH.sub : GLYPH.running} ${TAG.sub}  ${sc.tool}${sc.summary ? ` ${sc.summary}` : ''}${sc.isError ? ' ✗' : ''}`, description: figures(sc.done ? took(sc.ms) : took(now - sc.at)) }
         })
         const name = agent ? (c.agentType ?? 'Agent') : c.tool
         return {
           key: ck,
-          icon: c.isError ? 'error' : !c.done ? 'activity' : agent ? 'agent' : 'wrench',
-          label: `${agent ? TAG.agent : TAG.tool}  ${name}${c.summary ? ` ${c.summary}` : ''}${c.isError ? ' ✗' : ''}${c.sub.length ? ` · ${plural(c.sub.length, 'call')}` : ''}`,
+          label: `${c.isError ? GLYPH.error : !c.done ? GLYPH.running : agent ? GLYPH.agent : GLYPH.tool} ${agent ? TAG.agent : TAG.tool}  ${name}${c.summary ? ` ${c.summary}` : ''}${c.isError ? ' ✗' : ''}${c.sub.length ? ` · ${plural(c.sub.length, 'call')}` : ''}`,
           description: figures(kTok(c.tokens), c.done ? took(c.ms) : took(now - c.at)),
           children: sub.length ? sub : undefined
         }
@@ -205,8 +210,7 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
       const text = s.text || (live ? '…' : s.calls.length ? '' : '(no text)')
       children.push({
         key: sk,
-        icon: live ? 'activity' : 'bot',
-        label: `${TAG.claude}  #${s.n}${text ? ` ${text}` : ''}`,
+        label: `${live ? GLYPH.running : GLYPH.claude} ${TAG.claude}  #${s.n}${text ? ` ${text}` : ''}`,
         description: figures(s.output != null && kTok(s.output), took(stepMs(s, now))),
         children: calls.length ? calls : undefined
       })
@@ -214,8 +218,8 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
     const span = turn.steps.length ? took((turn.steps.at(-1)!.endedAt ?? now) - (turn.earlier ? turn.steps[0].at : turn.at)) : ''
     // Folded, a turn still says what it was about.
     const about = !opened.includes(key) && turn.prompt ? cutCells(turn.prompt, TURN_PROMPT) : null
-    const name = turnName(turn)
-    items.push({ key, icon: turn.auto ? 'activity' : 'flag', label: about ? `${name} · ${about}` : name, description: figures(plural(turn.steps.length, 'request'), span), children })
+    const name = `${turn.auto ? GLYPH.event : GLYPH.turn} ${turnName(turn)}`
+    items.push({ key, label: about ? `${name} · ${about}` : name, description: figures(plural(turn.steps.length, 'request'), span), children })
   })
   return { items, byKey }
 }
