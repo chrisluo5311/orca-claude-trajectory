@@ -153,12 +153,28 @@ function turnKeys(t: Trajectory): string[] {
   })
 }
 
+// Each request's key, by when it was sent, as a turn's is: its number counts
+// from the oldest request read, so it shifts when old records are dropped, and
+// a key by number would then select or open a different request.
+function stepKeys(t: Trajectory): Map<Step, string> {
+  const seen = new Map<number, number>()
+  const out = new Map<Step, string>()
+  for (const turn of t.turns) {
+    for (const s of turn.steps) {
+      const n = seen.get(s.at) ?? 0
+      seen.set(s.at, n + 1)
+      out.set(s, n ? `r${s.at}-${n}` : `r${s.at}`)
+    }
+  }
+  return out
+}
+
 // Open until the person says otherwise: the newest turn and its last request.
 function defaultOpen(t: Trajectory): string[] {
   const key = turnKeys(t).at(-1)
   if (!key) return []
   const last = t.turns.at(-1)!.steps.at(-1)
-  return last ? [key, `r${last.n}`] : [key]
+  return last ? [key, stepKeys(t).get(last)!] : [key]
 }
 
 const TURN_PROMPT = 22 // cells of a prompt a folded turn says: its figures keep their room in a sidebar
@@ -170,6 +186,7 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
   const byKey = new Map<string, Row>()
   const items: TreeItem[] = []
   const keys = turnKeys(t)
+  const sKeys = stepKeys(t)
   byKey.set('fixed', { kind: 'fixed' })
   items.push({ key: 'fixed', label: `${GLYPH.fixed} ${TAG.fixed}  Fixed overhead`, description: t.overhead != null ? `≈${kTok(t.overhead)}` : undefined })
   t.turns.forEach((turn, i) => {
@@ -181,11 +198,11 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
       children.push({ key: `y${key}`, label: `${GLYPH.you} ${TAG.you}  ${turn.prompt || '(empty prompt)'}`, description: figures(kTok(turn.tokens ?? Math.round(turn.chars / 4))) })
     }
     for (const s of turn.steps) {
+      const sk = sKeys.get(s)!
       if (s.isCompacted) {
-        byKey.set(`k${s.n}`, { kind: 'compact', step: s })
-        children.push({ key: `k${s.n}`, label: `${GLYPH.compact} ${TAG.compact}  Context compacted` })
+        byKey.set(`k${sk}`, { kind: 'compact', step: s })
+        children.push({ key: `k${sk}`, label: `${GLYPH.compact} ${TAG.compact}  Context compacted` })
       }
-      const sk = `r${s.n}`
       byKey.set(sk, { kind: 'claude', step: s })
       const live = s.status === 'streaming'
       const calls: TreeItem[] = !calling ? [] : s.calls.map((c) => {
@@ -224,21 +241,31 @@ function rows(t: Trajectory, now: number, opened: readonly string[]): { items: T
 
 // ---------------------------------------------------------------- the toolbar
 
-// All the turns folded, or all of them open with their requests.
-function toggleTurns(t: Trajectory, opened: readonly string[]): void {
+// All the turns folded, or all of them open with their requests. From the rows
+// open now, not as last drawn, so a toggle just before can't be undone.
+function toggleTurns(t: Trajectory): void {
   const turns = turnKeys(t)
-  if (turns.some((k) => opened.includes(k))) {
-    set(expanded, opened.filter((k) => !turns.includes(k)))
-    return
-  }
-  set(expanded, [...new Set([...opened, ...turns, ...t.turns.flatMap((x) => x.steps.map((s) => `r${s.n}`))])])
+  update(expanded, (cur) => {
+    const opened = cur ?? defaultOpen(t)
+    if (turns.some((k) => opened.includes(k))) return opened.filter((k) => !turns.includes(k))
+    return [...new Set([...opened, ...turns, ...stepKeys(t).values()])]
+  })
+}
+
+// One row opened or closed, from the rows open now: two toggles before the
+// next draw would otherwise each start from the same list, and the first be lost.
+function toggleRow(t: Trajectory, key: string, isOpen: boolean): void {
+  update(expanded, (cur) => {
+    const opened = cur ?? defaultOpen(t)
+    return isOpen ? [...new Set([...opened, key])] : opened.filter((k) => k !== key)
+  })
 }
 
 function toolbar(t: Trajectory, opened: readonly string[]) {
   const anyOpen = turnKeys(t).some((k) => opened.includes(k))
   return (
     <Row wrap gap="sm" align="center">
-      <Button size="sm" variant="ghost" icon={anyOpen ? 'collapse' : 'expand'} onPress={() => toggleTurns(t, opened)}>
+      <Button size="sm" variant="ghost" icon={anyOpen ? 'collapse' : 'expand'} onPress={() => toggleTurns(t)}>
         {anyOpen ? 'Fold turns' : 'Open turns'}
       </Button>
       <Switch label="Calls" checked={read(showCalls)} onChange={(v) => set(showCalls, v)} />
@@ -541,7 +568,7 @@ export default function Panel() {
         expanded={opened}
         maxHeight="lg"
         onSelect={({ key }) => set(selected, key === read(selected) ? null : key)}
-        onToggle={({ key, expanded: isOpen }) => set(expanded, isOpen ? [...new Set([...opened, key])] : opened.filter((k) => k !== key))}
+        onToggle={({ key, expanded: isOpen }) => toggleRow(t, key, isOpen)}
       />
       {row && sel ? <Card title={cardTitle(row)}>{details(sel, row, t, now)}</Card> : null}
       <Stack gap="xs">

@@ -16,6 +16,9 @@ const answer = (extra: Partial<TrajectoryAnswer> = {}): TrajectoryAnswer => ({
   ...extra
 })
 
+// A request row's key: by when it was sent, so it holds as older records leave.
+const firstRequest = `r${answer().data!.turns[0].steps[0].at}`
+
 let view: TestPanel | undefined
 const drawn = (text: string): boolean => JSON.stringify(view!.tree()).includes(JSON.stringify(text).slice(1, -1))
 afterEach(async () => {
@@ -38,7 +41,7 @@ test('draws the rows and opens a row’s details', async () => {
   assert.ok(view.find({ role: 'heading', text: 'Claude Trajectory' }))
   const tree = view.find({ label: 'Trajectory rows' })
   assert.ok(tree)
-  await view.expand({ label: 'Trajectory rows' }, 'r1')
+  await view.expand({ label: 'Trajectory rows' }, firstRequest)
   await view.selectItem({ label: 'Trajectory rows' }, 'ctoolu_1')
   assert.ok(drawn('Request #1'))
   assert.ok(drawn('Called by'))
@@ -123,7 +126,7 @@ test('the toolbar folds every turn, then opens them', async () => {
 
 test('Calls off leaves the requests without their calls, and closes a call’s details', async () => {
   view = await mount(panel, { host: hostOf(answer()) })
-  await view.expand({ label: 'Trajectory rows' }, 'r1')
+  await view.expand({ label: 'Trajectory rows' }, firstRequest)
   await view.selectItem({ label: 'Trajectory rows' }, 'ctoolu_1')
   assert.ok(drawn('Called by'))
   await view.toggle({ label: 'Calls' })
@@ -212,4 +215,21 @@ test('the lanes say what they show, and the key lists only what is drawn', async
   assert.ok(!view.find({ label: 'To time' }))
   assert.deepEqual(view.errors, [])
   assert.deepEqual(view.refusals, [])
+})
+
+test('a selected request stays selected when older records leave', async () => {
+  const later = T0 + 86_400_000
+  const lines = [prompt(0, 'one'), assistant(10, 'r1', [{ type: 'text', text: 'first reply' }]), prompt(100, 'two'), assistant(110, 'r2', [{ type: 'text', text: 'second reply' }])]
+  const whole = build(parseLines(jsonl(lines)), [], true, later)
+  // The same session, its first turn no longer read: the second request is now #1.
+  const tail = build(parseLines(jsonl(lines.slice(2))), [], false, later, { n: 1, open: false })
+  let data = whole
+  view = await mount(panel, { host: mockHost({ capabilities: ['workspace:read', 'agent:read'], requests: { 'trajectory.get': () => answer({ data }) } }) })
+  await view.selectItem({ label: 'Trajectory rows' }, `r${whole.turns[1].steps[0].at}`)
+  assert.ok(drawn('Request #2'))
+  data = tail
+  await view.press({ label: 'Refresh' })
+  assert.ok(drawn('Request #1'))
+  assert.ok(drawn('second reply'))
+  assert.deepEqual(view.errors, [])
 })
