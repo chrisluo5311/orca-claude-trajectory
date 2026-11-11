@@ -1,10 +1,10 @@
 import { afterEach, assert, beforeEach, test } from 'orca/testing'
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { claudeHome, listSessions, projectDirName, readCapped, readSubagents, TranscriptCache, within } from './locate.ts'
-import { LIMITS } from './transcript.ts'
-import { assistant, attachment, basicSession, jsonl, prompt, toolUse } from './fixtures.ts'
+import { CAPS, claudeHome, listSessions, projectDirName, readCapped, readSubagents, TranscriptCache, within } from './locate.ts'
+import { build, LIMITS, parseLines } from './transcript.ts'
+import { assistant, attachment, basicSession, jsonl, prompt, T0, toolUse } from './fixtures.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
 const S2 = '22222222-2222-4222-8222-222222222222'
@@ -150,6 +150,35 @@ test('a session past the record cap no longer claims to start at its start', asy
     assert.equal((await new TranscriptCache().read(file)).complete, false)
   } finally {
     LIMITS.records = was
+  }
+})
+
+test('turns before what is read, or pushed out of it, are still counted', async () => {
+  const was = { ...CAPS }
+  const limit = LIMITS.records
+  try {
+    const file = join(dir(), `${S1}.jsonl`)
+    const turn = (i: number) => [prompt(i * 10, `p${i}`), assistant(i * 10 + 1, `r${i}`, [{ type: 'text', text: 'ok' }])]
+    const head = jsonl(Array.from({ length: 5 }, (_, i) => turn(i)).flat())
+    writeFileSync(file, head + jsonl(Array.from({ length: 5 }, (_, i) => turn(i + 5)).flat()))
+    CAPS.transcriptBytes = Buffer.byteLength(head) - 10
+    const cache = new TranscriptCache()
+    const got = await cache.read(file)
+    assert.equal(got.complete, false)
+    const whole = parseLines(readFileSync(file, 'utf8'))
+    assert.equal(got.before.n, whole.slice(0, whole.length - got.records.length).filter((r) => r.k === 'asst').length)
+    const t = build(got.records, [], got.complete, T0 + 86_400_000, got.before)
+    assert.equal(t.turns.at(-1)!.n, 10)
+
+    LIMITS.records = 4
+    appendFileSync(file, jsonl(turn(10)))
+    const grown = await cache.read(file)
+    assert.equal(build(grown.records, [], grown.complete, T0 + 86_400_000, grown.before).turns.at(-1)!.n, 11)
+    const fresh = await new TranscriptCache().read(file)
+    assert.equal(build(fresh.records, [], fresh.complete, T0 + 86_400_000, fresh.before).turns.at(-1)!.n, 11)
+  } finally {
+    Object.assign(CAPS, was)
+    LIMITS.records = limit
   }
 })
 

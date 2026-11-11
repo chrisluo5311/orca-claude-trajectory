@@ -321,6 +321,16 @@ test('a turn keeps its number when older ones leave the window', () => {
 })
 
 const reply = (ms: number, id: string) => assistant(ms, id, [{ type: 'text', text: 'ok' }])
+
+test('numbers carry on from turns before the records', () => {
+  const lines = [prompt(0, 'a'), reply(1, 'r1')]
+  assert.equal(build(parseLines(jsonl(lines)), [], false, LATER, { n: 13, open: false }).turns[0].n, 14)
+  // The prompt was left out, its reply wasn't: that turn is the 14th, the next the 15th.
+  const t = build(parseLines(jsonl([reply(0, 'r0'), ...lines])), [], false, LATER, { n: 13, open: true })
+  assert.deepEqual(t.turns.map((x) => [x.earlier, x.n]), [[true, 0], [false, 15]])
+  // A prompt left out with no reply, then another: it never was a turn.
+  assert.equal(build(parseLines(jsonl(lines)), [], false, LATER, { n: 13, open: true }).turns[0].n, 14)
+})
 const promptOf = (text: string) => build(parseLines(jsonl([prompt(0, text), reply(10, 'r1')])), [], true, LATER).turns[0]
 
 test('a command run with "!" reads as what was typed', () => {

@@ -508,12 +508,27 @@ function splitBySize(pieces: Piece[], total: number): void {
 
 const LIVE_MS = 10 * 60_000 // a request with no end this recent is still under way
 
+/** The turns in records that were left out, so those after them keep their numbers. */
+export type TurnTally = { n: number; open: boolean }
+
+/** Counts records into a tally, by what makes a numbered turn: a typed prompt that got a request. */
+export function tallyTurns(records: readonly Rec[], tally: TurnTally): void {
+  for (const r of records) {
+    if (r.k === 'prompt') tally.open = !r.auto
+    else if (r.k === 'asst' && tally.open) {
+      tally.n++
+      tally.open = false
+    }
+  }
+}
+
 /**
  * The trajectory from a session's records, oldest first. `complete` says the
  * records start at the session's start (so the first request tells the fixed
- * overhead); `now` decides what is still under way.
+ * overhead); `now` decides what is still under way; `before` tallies the turns
+ * in any records before these.
  */
-export function build(records: readonly Rec[], subagents: readonly Subagent[], complete: boolean, now = Date.now()): Trajectory {
+export function build(records: readonly Rec[], subagents: readonly Subagent[], complete: boolean, now = Date.now(), before: TurnTally = { n: 0, open: false }): Trajectory {
   const turns: Turn[] = []
   const steps: StepW[] = []
   const calls = new Map<string, Call>()
@@ -681,8 +696,12 @@ export function build(records: readonly Rec[], subagents: readonly Subagent[], c
   const lastTurn = turns.at(-1)
   // Numbered before any are left out, so a turn keeps its number as the session grows.
   // A prompt that sent no request (a local command, say) is not a turn.
-  let turnN = 0
-  for (const t of turns) if (!t.earlier && !t.auto && (t.steps.length || t === lastTurn)) t.n = ++turnN
+  let turnN = before.n
+  for (const t of turns) {
+    // Requests answering a prompt left out: that prompt's turn takes its number here.
+    if (t.earlier && before.open) turnN++
+    else if (!t.earlier && !t.auto && (t.steps.length || t === lastTurn)) t.n = ++turnN
+  }
   const outTurns: Turn[] = []
   for (const t of turns) {
     const kept = t.steps.filter((s) => keep.has(s as StepW))

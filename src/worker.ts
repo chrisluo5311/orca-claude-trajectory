@@ -140,11 +140,11 @@ export default function activate(orca: OrcaWorkerApi): void {
 
     let data: Trajectory
     try {
-      const { records, complete } = await cache.read(session.file)
+      const { records, complete, before } = await cache.read(session.file)
       const agentCalls = new Set<string>()
       for (const r of records) if (r.k === 'asst') for (const t of r.tools) if (isAgentTool(t.tool)) agentCalls.add(t.id)
       const subagents = agentCalls.size ? await readSubagents(root, session.dir, session.id, agentCalls) : []
-      data = build(records, subagents, complete)
+      data = build(records, subagents, complete, Date.now(), before)
     } catch (err) {
       cache.clear()
       orca.log(`could not read session ${session.id}: ${err instanceof Error ? err.message : String(err)}`)

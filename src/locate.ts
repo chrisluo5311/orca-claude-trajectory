@@ -14,12 +14,13 @@
 import { constants, promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { cwdOf, LIMITS, parseLines, titleOf, type Rec, type Subagent } from './transcript.ts'
+import { cwdOf, LIMITS, parseLines, tallyTurns, titleOf, type Rec, type Subagent, type TurnTally } from './transcript.ts'
 import { isAgentTool } from './format.ts'
 import type { SessionInfo } from './protocol.ts'
 
 export const CAPS = {
   transcriptBytes: 32 * 1024 * 1024, // the newest part of a session read
+  tallyBytes: 512 * 1024 * 1024, // of the part before it, scanned to number its turns: past this, numbers run low
   subagentBytes: 4 * 1024 * 1024,
   metaBytes: 16 * 1024,
   headBytes: 64 * 1024, // read to learn a session's working directory
@@ -70,7 +71,7 @@ async function safeEntry(root: string, path: string, kind: 'file' | 'dir'): Prom
 }
 
 /** Up to `max` bytes from the end of a file (`from: 'end'`) or its start, and whether that is all of it. */
-export async function readCapped(path: string, max: number, from: 'end' | 'start' = 'end'): Promise<{ text: string; complete: boolean; size: number }> {
+export async function readCapped(path: string, max: number, from: 'end' | 'start' = 'end'): Promise<{ text: string; complete: boolean; size: number; startsAt: number }> {
   const handle = await fs.open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
   try {
     const st = await handle.stat()
@@ -90,7 +91,7 @@ export async function readCapped(path: string, max: number, from: 'end' | 'start
     // Started inside a line: drop it. Ended inside one: drop that too.
     if (start > 0) text = text.slice(text.indexOf('\n') + 1)
     if (from === 'start' && !complete) text = text.slice(0, text.lastIndexOf('\n') + 1)
-    return { text, complete, size }
+    return { text, complete, size, startsAt: start > 0 ? start + buf.subarray(0, read).indexOf(10) + 1 : 0 }
   } finally {
     await handle.close()
   }
@@ -292,7 +293,7 @@ function parseSidechain(text: string): Rec[] {
 
 // ---------------------------------------------------------------- a growing transcript
 
-type Cached = { file: string; ino: number; size: number; complete: boolean; replied: boolean; records: Rec[] }
+type Cached = { file: string; ino: number; size: number; complete: boolean; replied: boolean; records: Rec[]; before: TurnTally }
 
 // Context lines only tell what came with the first request, so those after its
 // reply aren't kept: they would push real records out. Says whether a reply came.
@@ -312,7 +313,7 @@ function dropLateContext(records: Rec[], replied: boolean): { records: Rec[]; re
 export class TranscriptCache {
   private entry: Cached | null = null
 
-  async read(file: string): Promise<{ records: Rec[]; complete: boolean }> {
+  async read(file: string): Promise<{ records: Rec[]; complete: boolean; before: TurnTally }> {
     const st = await fs.lstat(file)
     if (st.isSymbolicLink() || !st.isFile()) throw new Error('not a file')
     const e = this.entry
@@ -326,25 +327,52 @@ export class TranscriptCache {
         e.records.push(...fresh.records)
         if (e.records.length > LIMITS.records) {
           // The session's start is gone now: its first request can't be told.
-          e.records.splice(0, e.records.length - LIMITS.records)
+          tallyTurns(e.records.splice(0, e.records.length - LIMITS.records), e.before)
           e.complete = false
         }
         e.size += end
       }
-      return { records: e.records, complete: e.complete }
+      return { records: e.records, complete: e.complete, before: e.before }
     }
-    const { text, complete: whole0, size } = await readCapped(file, CAPS.transcriptBytes, 'end')
+    const { text, complete: whole0, size, startsAt } = await readCapped(file, CAPS.transcriptBytes, 'end')
     const whole = text.slice(0, text.lastIndexOf('\n') + 1)
     const parsed = dropLateContext(parseLines(whole), false)
     const complete = whole0 && parsed.records.length <= LIMITS.records
     const records = parsed.records.slice(-LIMITS.records)
+    const before = await tallyBefore(file, startsAt)
+    tallyTurns(parsed.records.slice(0, -LIMITS.records), before)
     const consumed = size - Buffer.byteLength(text.slice(whole.length), 'utf8')
-    this.entry = { file, ino: st.ino, size: consumed, complete, replied: parsed.replied, records }
-    return { records, complete }
+    this.entry = { file, ino: st.ino, size: consumed, complete, replied: parsed.replied, records, before }
+    return { records, complete, before }
   }
 
   clear(): void {
     this.entry = null
+  }
+}
+
+// The turns in the part of a transcript that isn't kept, a chunk at a time so
+// a long session is never in memory whole. `end` is where a line starts.
+async function tallyBefore(file: string, end: number): Promise<TurnTally> {
+  const tally: TurnTally = { n: 0, open: false }
+  if (end <= 0) return tally
+  const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  try {
+    const stop = Math.min(end, CAPS.tallyBytes)
+    const chunk = Buffer.alloc(Math.min(stop, 1024 * 1024))
+    let carry = Buffer.alloc(0)
+    for (let at = 0; at < stop; ) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, stop - at), at)
+      if (!bytesRead) break
+      at += bytesRead
+      const data = carry.length ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead)
+      const whole = data.lastIndexOf(10) + 1
+      tallyTurns(parseLines(data.toString('utf8', 0, whole)), tally)
+      carry = Buffer.from(data.subarray(whole))
+    }
+    return tally
+  } finally {
+    await handle.close()
   }
 }
 
