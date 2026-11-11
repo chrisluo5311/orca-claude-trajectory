@@ -8,7 +8,7 @@ An [Orca](https://github.com/stablyai/orca) sidebar panel that shows what a [Cla
 
 - **FIXED**: what every request carries before the conversation, estimated from the first request. Select it to open it by category: system prompt, built-in tools, MCP tools by server, MCP instructions, memory files, skills, agents, deferred tool names.
 - **Turn N**: each prompt you typed (**YOU**), each request Claude Code sent the model (**CLAUDE**, with input/output tokens, cache hit, time to first block, duration and end-to-end tok/s), and the tool calls each request made (**TOOL**, or **AGENT** with the subagent's own calls under it). Requests that a background event started rather than a prompt (a finished task, a CI event) sit in a group of their own, not numbered as a turn.
-- **Lanes**: Input, Model, Tools and Agents drawn in order, or in time with **To time**.
+- **Lanes**: Input, Model, Tools and Agents, drawing the newest events in order.
 - **Toolbar**: fold or open every turn at once, and leave out **Calls** or **Subcalls**. A folded turn still says what its prompt was. Calls made by an agent that another subagent started show under the first Agent call, and say which agent made them.
 - **Details**: select a row for its Summary, Input, Result or Timing.
 - **Export**: saves the trajectory as text (figures, tools and what they were about; no prompt, reply, input or output text).

@@ -3,8 +3,7 @@
 // and every tool definition), then each turn: your prompt (YOU), each request
 // Claude was sent (CLAUDE), and the tool calls each request made (TOOL, AGENT
 // with its own calls under it). Selecting a row opens its details under the
-// list. Lanes above the rows draw the same events in order, or in time with
-// To time.
+// list. Lanes above the rows draw the newest events in order.
 //
 // A components panel: Orca draws every control itself and the panel has no
 // DOM, so transcript text can only ever appear as text.
@@ -40,11 +39,11 @@ import {
   type KeyValueItem,
   type OrcaNode,
   type PanelContext,
-  type Tone,
   type TreeItem
 } from 'orca'
 import type { Call, FixedItem, Step, SubCall, Trajectory, TrajectoryAnswer, Turn } from './protocol.ts'
 import { cutCells, isAgentTool, kTok, plural, stamp, stepMs, took, trajectoryText, turnName } from './format.ts'
+import { cellsInOrder, laneItems, LANES, MAX_SLOTS, type Cell, type Fill } from './lanes.ts'
 
 // ---------------------------------------------------------------- state
 
@@ -57,7 +56,6 @@ const selected = atom<string | null>('selected', null)
 const tabOf = atom<Record<string, string>>('tabs', {})
 /** Rows opened in the list; null until the person opens or closes one. */
 const expanded = atom<string[] | null>('expanded', null)
-const duration = atom('duration', false, { persist: 'plugin' })
 const showCalls = atom('showCalls', true, { persist: 'plugin' })
 const showSubcalls = atom('showSubcalls', true, { persist: 'plugin' })
 
@@ -409,127 +407,60 @@ function details(key: string, r: Row, t: Trajectory, now: number) {
 
 // ---------------------------------------------------------------- lanes
 
-type Lane = 'in' | 'model' | 'tools' | 'sub'
-type Fill = Tone | 'muted'
-type Item = { lane: Lane; fill: Fill; t0: number; t1: number; first?: number | null; slot: boolean }
-
-const LANES: [Lane, string][] = [
-  ['in', 'Input'],
-  ['model', 'Model'],
-  ['tools', 'Tools'],
-  ['sub', 'Agents']
-]
-const MAX_SLOTS = 9 // in order, the newest slots: two cells each of the 18
-
-function laneItems(t: Trajectory, now: number): Item[] {
-  const items: Item[] = []
-  for (const turn of t.turns) {
-    if (!turn.earlier) items.push({ lane: 'in', fill: 'accent', t0: turn.at, t1: turn.at, slot: true })
-    turn.steps.forEach((s, i) => {
-      if (i && turn.steps[i - 1].calls.length) items.push({ lane: 'in', fill: 'warning', t0: s.at, t1: s.at, slot: true })
-      items.push({ lane: 'model', fill: 'success', t0: s.at, t1: s.endedAt ?? now, first: s.firstAt, slot: true })
-      for (const c of s.calls) {
-        items.push({ lane: 'tools', fill: c.isError ? 'danger' : isAgentTool(c.tool) ? 'accent' : 'warning', t0: c.at, t1: c.done ? c.at + (c.ms ?? 0) : now, slot: true })
-        for (const sc of c.sub) items.push({ lane: 'sub', fill: sc.isError ? 'danger' : 'accent', t0: sc.at, t1: sc.done ? sc.at + (sc.ms ?? 0) : now, slot: false })
-      }
-    })
-  }
-  return items
-}
-
-type Seg = { x: number; w: number; fill: Fill; first?: number }
-
-// Each lane's bars as [start, width] shares of the lane, in order (equal slots) or in time.
-function laneSegments(items: Item[], inTime: boolean): Map<Lane, Seg[]> {
-  const out = new Map<Lane, Seg[]>(LANES.map(([l]) => [l, []]))
-  if (!items.length) return out
-  if (inTime) {
-    const start = Math.min(...items.map((i) => i.t0))
-    const end = Math.max(...items.map((i) => i.t1), start + 1)
-    const span = end - start
-    for (const it of items) {
-      const first = it.first != null && it.t1 > it.t0 ? Math.min(1, Math.max(0, (it.first - it.t0) / (it.t1 - it.t0))) : undefined
-      out.get(it.lane)!.push({ x: (it.t0 - start) / span, w: (it.t1 - it.t0) / span, fill: it.fill, first })
-    }
-  } else {
-    // The newest slots that fit; a subagent's calls share their Agent call's slot.
-    const slotted = items.filter((i) => i.slot)
-    const skip = Math.max(0, slotted.length - MAX_SLOTS)
-    const n = slotted.length - skip
-    let k = -1
-    for (const it of items) {
-      if (it.slot) k++
-      const at = k - skip
-      if (at < 0) continue
-      if (it.slot) out.get(it.lane)!.push({ x: at / n, w: (1 / n) * 0.86, fill: it.fill, first: it.first != null && it.t1 > it.t0 ? Math.min(0.6, (it.first - it.t0) / (it.t1 - it.t0)) : undefined })
-      else {
-        const lane = out.get('sub')!
-        if (!lane.some((s) => s.x === at / n)) lane.push({ x: at / n, w: (1 / n) * 0.86, fill: it.fill })
-      }
-    }
-  }
-  return out
-}
-
 // One lane as a row of cells spread across the panel: a full block "█" in the
 // tone of what is there, a quiet "─" where nothing is. Box backgrounds only tint, so the lanes are drawn in
 // text, as the squad-chat terminal draws them.
-const CELLS = 18 // a glyph is about 13px wide: 18 fit a lane from about 240px (a 330px sidebar)
-function laneRow(segs: Seg[]) {
-  const cells: (Fill | null)[] = Array(CELLS).fill(null)
-  for (const s of segs) {
-    const a = Math.min(CELLS - 1, Math.max(0, Math.floor(s.x * CELLS)))
-    const b = Math.min(CELLS, Math.max(a + 1, Math.round((s.x + s.w) * CELLS)))
-    const wait = s.first != null && b - a >= 2 ? Math.round((b - a) * s.first) : 0
-    for (let x = a; x < b; x++) cells[x] = x < a + wait ? 'muted' : s.fill
-  }
+function laneRow(cells: Cell[]) {
   // Each cell takes an equal share of the lane, so the lane spans the panel
   // however wide it is: a run of blocks reads as one bar.
   return (
     <Box direction="row" grow shrink minWidth={1} justify="between" align="center">
-      {cells.map((c) =>
-        c == null ? (
-          <Text size="xs" muted>
-            ─
-          </Text>
-        ) : c === 'muted' ? (
-          <Text size="xs" muted>
-            ▒
-          </Text>
-        ) : (
-          <Text size="xs" tone={c}>
-            █
-          </Text>
-        )
-      )}
+      {cells.map((c) => {
+        if (c == null) return <Text size="xs" muted>─</Text>
+        if (c === 'muted') return <Text size="xs" muted>▒</Text>
+        if (c === 'event') return <Text size="xs" tone="neutral">◆</Text>
+        return <Text size="xs" tone={c}>█</Text>
+      })}
     </Box>
   )
 }
 
+// What each mark means: a key, not buttons, and only for the marks drawn.
+const KEY: [Fill, string][] = [
+  ['accent', 'prompt / agent'],
+  ['event', 'event'],
+  ['success', 'model'],
+  ['muted', 'waiting'],
+  ['warning', 'tool / result'],
+  ['danger', 'error']
+]
+
+function keyMark(c: Fill) {
+  if (c === 'muted') return <Text muted>▒</Text>
+  if (c === 'event') return <Text tone="neutral">◆</Text>
+  return <Text tone={c}>█</Text>
+}
+
 function lanes(t: Trajectory, now: number) {
-  const inTime = read(duration)
-  const segs = laneSegments(laneItems(t, now), inTime)
+  const cells = cellsInOrder(laneItems(t, now))
+  const drawn = new Set([...cells.values()].flat())
   return (
     <Stack gap="xs">
-      <Row justify="between" align="center">
-        <Text muted size="xs">
-          {inTime ? 'Whole session, to time' : `Newest ${MAX_SLOTS} events, in order`}
-        </Text>
-        <Switch label="To time" checked={inTime} onChange={(v) => set(duration, v)} />
-      </Row>
-      {LANES.filter(([lane]) => lane !== 'sub' || segs.get('sub')!.length).map(([lane, name]) => (
+      <Text muted size="xs">
+        {`Newest ${MAX_SLOTS} events, in order`}
+      </Text>
+      {LANES.filter(([lane]) => lane !== 'sub' || cells.get('sub')!.some((c) => c != null)).map(([lane, name]) => (
         <Row gap="sm" align="center">
           <Box width={52} shrink={false}>
             <Text muted size="xs">
               {name}
             </Text>
           </Box>
-          {laneRow(segs.get(lane)!)}
+          {laneRow(cells.get(lane)!)}
         </Row>
       ))}
-      {/* What each colour means: a key, not buttons. */}
       <Text size="xs" muted>
-        <Text tone="accent">█</Text> prompt / agent  <Text tone="success">█</Text> model  <Text muted>▒</Text> waiting  <Text tone="warning">█</Text> tool  <Text tone="danger">█</Text> error
+        {KEY.filter(([c]) => drawn.has(c)).map(([c, name]) => [keyMark(c), ` ${name}  `])}
       </Text>
     </Stack>
   )

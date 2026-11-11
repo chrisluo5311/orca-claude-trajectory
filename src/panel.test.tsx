@@ -203,3 +203,13 @@ test('a FIXED category opens to what is in it', async () => {
   assert.deepEqual(view.errors, [])
   assert.deepEqual(view.refusals, [])
 })
+
+test('the lanes say what they show, and the key lists only what is drawn', async () => {
+  view = await mount(panel, { host: hostOf(answer()) })
+  assert.ok(drawn('in order'))
+  assert.ok(drawn(' model  '))
+  assert.ok(!drawn(' error  '))
+  assert.ok(!view.find({ label: 'To time' }))
+  assert.deepEqual(view.errors, [])
+  assert.deepEqual(view.refusals, [])
+})
