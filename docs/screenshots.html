@@ -1,0 +1,67 @@
+<!doctype html>
+<!--
+  The listing's screenshots: three shots of the panel, as Orca drew them, side by side.
+  Open with ?theme=light|dark&set=overview|details and capture at 1920x1200.
+
+  Its inputs are shots of the panel on the showcase session (src/fixtures.ts), 440 px wide,
+  saved to .orca/shots/listing/<view>-<theme>.png (not in the repository):
+    orca plugin shot . --scenario showcase --theme light --width 440
+  A scenario shot is a still frame. The views with rows opened or selected were shot from
+  the loaded panel with --act, while its worker answered with the showcase session.
+-->
+<html lang="en"><head><meta charset="utf-8"><title>Screenshots</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1200px; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; background: var(--bg); color: var(--ink); }
+  body.light {
+    --ink: #1f1e1d; --quiet: #6b6560; --line: #e2dbd0; --accent: #d97757;
+    --bg: radial-gradient(900px 700px at 88% 8%, #f8ddd0 0%, transparent 70%), radial-gradient(800px 600px at 6% 100%, #f1e9dc 0%, transparent 70%), #f4f1ec;
+    --shadow: 0 2px 4px rgba(80,50,30,.06), 0 18px 40px rgba(80,50,30,.12);
+  }
+  body.dark {
+    --ink: #f3f1ee; --quiet: #a39c94; --line: #34312e; --accent: #e08a6b;
+    --bg: radial-gradient(900px 700px at 88% 8%, #3a2219 0%, transparent 70%), radial-gradient(800px 600px at 6% 100%, #24201b 0%, transparent 70%), #0e0d0c;
+    --shadow: 0 2px 4px rgba(0,0,0,.4), 0 18px 40px rgba(0,0,0,.5);
+  }
+  main { display: flex; justify-content: center; gap: 80px; padding-top: 38px; }
+  figure { width: 440px; }
+  figcaption { height: 86px; }
+  figcaption b { display: flex; align-items: center; gap: 10px; font-size: 24px; font-weight: 650; letter-spacing: -0.01em; }
+  figcaption b::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); flex: none; }
+  figcaption span { display: block; margin-top: 6px; padding-left: 19px; font-size: 17px; color: var(--quiet); }
+  img { display: block; width: 440px; height: 990px; border-radius: 16px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+</style></head><body>
+<main id="shots"></main>
+<script>
+  const SETS = {
+    overview: [
+      ['rows', 'Every request, in order', 'Prompts, requests, tool calls and subagents'],
+      ['request', 'What a request cost', 'Tokens, cache hit and the model, per request'],
+      ['fixed', 'What every request carries', 'The fixed overhead, opened by category']
+    ],
+    details: [
+      ['failed', 'Why a call failed', 'The first lines of a tool’s result'],
+      ['agent', 'What a subagent did', 'Its own calls, and how long each took'],
+      ['timing', 'Where the time went', 'First block, duration and tok/s']
+    ]
+  }
+  const q = new URLSearchParams(location.search)
+  const theme = q.get('theme') === 'dark' ? 'dark' : 'light'
+  document.body.className = theme
+  for (const [view, title, about] of SETS[q.get('set')] ?? SETS.overview) {
+    const figure = document.createElement('figure')
+    const caption = document.createElement('figcaption')
+    const b = document.createElement('b')
+    b.textContent = title
+    const span = document.createElement('span')
+    span.textContent = about
+    caption.append(b, span)
+    const img = document.createElement('img')
+    img.src = `../.orca/shots/listing/${view}-${theme}.png`
+    img.alt = title
+    figure.append(caption, img)
+    document.getElementById('shots').append(figure)
+  }
+</script>
+</body></html>

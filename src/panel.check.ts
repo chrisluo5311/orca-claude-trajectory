@@ -1,7 +1,7 @@
 // `orca plugin check` renders the panel once per scenario, with the worker stubbed by `requests`.
 import { defineCheck } from 'orca/testing'
 import { build, parseLines } from './transcript.ts'
-import { basicSession, jsonl, T0, withShape } from './fixtures.ts'
+import { basicSession, jsonl, showcaseSession, showcaseSubagent, T0, withShape } from './fixtures.ts'
 import type { TrajectoryAnswer } from './protocol.ts'
 
 const base: TrajectoryAnswer = {
@@ -13,8 +13,17 @@ const base: TrajectoryAnswer = {
   notice: null
 }
 
+// The session the README's and the listing's screenshots show.
+const showcase: TrajectoryAnswer = {
+  ...base,
+  workspaces: [{ id: 'ws-1', name: 'api · rate-limit' }],
+  sessions: [{ id: base.sessionId!, title: 'Rate limit the public API', updatedAt: T0 + 101_000 }],
+  data: build(parseLines(jsonl(showcaseSession())), [{ toolUseId: 'toolu_explore', agentType: 'Explore', records: parseLines(jsonl(showcaseSubagent()), { sidechain: true }) }], true, T0 + 86_400_000)
+}
+
 export default defineCheck({
   session: { requests: { 'trajectory.get': () => base } },
+  showcase: { requests: { 'trajectory.get': () => showcase } },
   'no calls': { requests: { 'trajectory.get': () => base }, persisted: { plugin: { showCalls: false } } },
   breakdown: { requests: { 'trajectory.get': () => ({ ...base, data: build(parseLines(jsonl(withShape())), [], true, T0 + 86_400_000) }) } },
   empty: { requests: { 'trajectory.get': () => ({ ...base, sessions: [], sessionId: null, data: null, notice: 'No Claude Code sessions in this workspace yet.' }) } }

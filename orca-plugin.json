@@ -2,12 +2,18 @@
   "manifestVersion": 2,
   "id": "claude-trajectory",
   "name": "Claude Trajectory",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "repository": "https://github.com/chrisluo5311/orca-claude-trajectory",
-  "description": "What a Claude Code session did, request by request: prompts, model requests, tool calls and subagents, with tokens and timing. Reads transcripts locally, read-only.",
+  "description": "What a Claude Code session did, request by request: prompts, model requests, tool calls and subagents, with tokens and timing, in Orca's light and dark themes. Reads transcripts locally, read-only.",
   "author": { "name": "chrisluo5311", "url": "https://github.com/chrisluo5311" },
   "license": "MIT",
   "cover": { "path": "docs/images/listing-cover.png", "alt": "Claude Trajectory: the panel listing a session's prompts, Claude's requests and tool calls, with lanes for input, model and tools above" },
+  "screenshots": [
+    { "path": "docs/images/screenshots/overview-light.png", "alt": "The panel in Orca's light theme: a session's rows, one request's tokens and cache hit, and the fixed overhead by category", "caption": "Every request in order, what one cost, and what each carries", "theme": "light" },
+    { "path": "docs/images/screenshots/overview-dark.png", "alt": "The same three views of the panel in Orca's dark theme", "caption": "Every request in order, what one cost, and what each carries", "theme": "dark" },
+    { "path": "docs/images/screenshots/details-light.png", "alt": "The panel in Orca's light theme: a failed tool call's result, a subagent's own calls, and a request's timing", "caption": "Why a call failed, what a subagent did, and where the time went", "theme": "light" },
+    { "path": "docs/images/screenshots/details-dark.png", "alt": "The same three details of the panel in Orca's dark theme", "caption": "Why a call failed, what a subagent did, and where the time went", "theme": "dark" }
+  ],
   "engines": {
     "orca": ">=1.4.248"
   },

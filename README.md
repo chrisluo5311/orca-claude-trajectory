@@ -15,6 +15,25 @@ An [Orca](https://github.com/stablyai/orca) sidebar panel that shows what a [Cla
 
 It follows the session live: the panel updates as the transcript grows.
 
+## Light and dark
+
+The panel follows Orca's theme, light or dark, with nothing to set: Orca draws every control, and the lanes use its tones. The screenshots below show whichever matches your GitHub theme.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshots/overview-dark.png">
+  <img src="docs/images/screenshots/overview-light.png" alt="Three views of the panel: a session's rows, one request's tokens and cache hit, and the fixed overhead by category">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshots/details-dark.png">
+  <img src="docs/images/screenshots/details-light.png" alt="Three details in the panel: a failed tool call's result, a subagent's own calls, and a request's timing">
+</picture>
+
+| Light | Dark |
+| --- | --- |
+| [Rows, a request, the fixed overhead](docs/images/screenshots/overview-light.png) | [Rows, a request, the fixed overhead](docs/images/screenshots/overview-dark.png) |
+| [A failed call, a subagent, timing](docs/images/screenshots/details-light.png) | [A failed call, a subagent, timing](docs/images/screenshots/details-dark.png) |
+
 It reads **Claude Code** sessions only. Other agents (Codex, Gemini CLI and so on) keep their sessions elsewhere, in other formats.
 
 This is the Usage room's Trajectory card from [squad-chat](https://github.com/chrisluo5311/squad-chat), moved to Orca on its own.
@@ -33,8 +52,10 @@ Squad-chat measured requests as they streamed. Here they are rebuilt from the tr
 
 Orca 1.4.248 or newer.
 
+It is in Orca's [plugin directory](https://orca.dev/plugins/chrisluo5311/orca-claude-trajectory): open it there and choose **Open in Orca**, or search for **Claude Trajectory** under **Settings → Plugins**. From a terminal:
+
 ```sh
-orca plugin install https://github.com/chrisluo5311/orca-claude-trajectory   # once published
+orca plugin install chrisluo5311/orca-claude-trajectory
 # or, from a checkout:
 orca plugin dev load /path/to/orca-claude-trajectory
 ```
@@ -47,7 +68,7 @@ Orca asks you to approve it. It asks for:
 | `workspace:read` | To know which workspace is focused and where its folder is. |
 | `agent:read` | To refresh when an agent's status changes. |
 
-Open it from the right sidebar (the activity icon), or `orca plugin open local.claude-trajectory --panel trajectory` (`<owner>.claude-trajectory` once installed from GitHub).
+Open it from the right sidebar (the activity icon), or `orca plugin open chrisluo5311.claude-trajectory --panel trajectory` (`local.claude-trajectory` when loaded from a checkout).
 
 ## Security
 
@@ -70,6 +91,7 @@ No build step: Orca loads `src/` as written.
 orca plugin dev watch . --check --shot .orca/shots   # load, reload on save, render checks
 orca plugin test . --json                            # unit tests (node:test)
 orca plugin check . --json                           # render the panel's scenarios
+orca plugin shot . --scenario showcase --theme light # a PNG of the panel on a sample session, in either theme
 npm install && npm run typecheck                     # optional: type-check with tsc
 ```
 
@@ -81,6 +103,8 @@ npm install && npm run typecheck                     # optional: type-check with
 | `src/redact.ts` | Cleans and masks every preview. |
 | `src/panel.tsx` | The panel. |
 | `src/format.ts` | Figures and the exported text. |
+| `src/fixtures.ts` | Sample transcripts for the tests, the scenarios and the screenshots. |
+| `docs/screenshots.html` | Lays three panel shots side by side for the listing's screenshots. |
 
 ## License
 

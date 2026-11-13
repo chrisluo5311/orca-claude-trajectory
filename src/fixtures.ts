@@ -72,3 +72,87 @@ export function withShape(): unknown[] {
     ...rest
   ]
 }
+
+// ---------------------------------------------------------------- the showcase
+
+const tokens = (input: number, output: number) => ({ input_tokens: 4, output_tokens: output, cache_read_input_tokens: input - 4, cache_creation_input_tokens: 0 })
+
+// One request: sent at `ms`, its text `wait` later, then its tool calls.
+function request(ms: number, wait: number, id: string, text: string, tools: object[], input: number, output: number, shape?: string): unknown[] {
+  const sent = { ...apiRequest(ms, `req-${id}`), ...(shape ? { shapeHash: shape } : {}) }
+  const said = assistant(ms + wait, id, [{ type: 'text', text }], tokens(input, output), tools.length ? null : 'end_turn', `req-${id}`)
+  return tools.length ? [sent, said, assistant(ms + wait + 400, id, tools, tokens(input, output), 'tool_use', `req-${id}`)] : [sent, said]
+}
+
+/**
+ * A fuller session, for the panel's `showcase` scenario and the screenshots made from it:
+ * two turns, a subagent, a failed call, and the lines that say what the first request carried.
+ */
+export function showcaseSession(): unknown[] {
+  const skills = `- code-review: ${'SKILL-WORDS '.repeat(60)}\n- deploy-checklist: ${'SKILL-WORDS '.repeat(25)}\n- release-notes`
+  const memory = 'MEMORY-WORDS '.repeat(220)
+  return [
+    { type: 'ai-title', aiTitle: 'Rate limit the public API', sessionId: 'x' },
+    requestShape('s1', [
+      toolDef('Bash', 260),
+      toolDef('Agent', 210),
+      toolDef('Edit', 120),
+      toolDef('Read', 110),
+      toolDef('Grep', 90),
+      toolDef('Write', 70),
+      toolDef('Glob', 40),
+      toolDef('mcp__github__create_pull_request', 150),
+      toolDef('mcp__github__list_issues', 80),
+      toolDef('mcp__linear__create_issue', 70)
+    ]),
+    attachment('skill_listing', skills, { content: skills, names: ['code-review', 'deploy-checklist', 'release-notes'] }),
+    attachment('mcp_instructions_delta', 'SERVER-WORDS '.repeat(90), { addedNames: ['github'], addedBlocks: ['SERVER-WORDS '.repeat(90)] }),
+    attachment('agent_listing_delta', '- Explore: looks around\n- Plan: plans the work', { addedTypes: ['Explore', 'Plan'], addedLines: ['- Explore: looks around', '- Plan: plans the work'] }),
+    attachment('deferred_tools_delta', 'WebSearch\nNotebookEdit', { addedNames: ['WebSearch', 'NotebookEdit'] }),
+    attachment('instructions', memory, { files: [{ path: '/work/app/CLAUDE.md', type: 'Project', content: memory }] }),
+
+    prompt(0, 'Add rate limiting to the public API'),
+    ...request(200, 2600, 'r1', 'I’ll look at how requests reach the router.', [toolUse('toolu_grep', 'Grep', { pattern: 'app.use', path: 'src/' })], 21_400, 96, 's1'),
+    toolResult(3_500, 'toolu_grep', 'src/server.ts:14:app.use(json())\nsrc/server.ts:15:app.use(auth)\nsrc/server.ts:22:app.use(\'/api\', router)'),
+    ...request(3_700, 3100, 'r2', 'Two places need limits. I’ll check the middleware that is already there.', [toolUse('toolu_explore', 'Agent', { description: 'Find existing middleware', subagent_type: 'Explore', prompt: 'List the middleware under src/middleware and how the router mounts it.' })], 21_680, 148),
+    toolResult(25_200, 'toolu_explore', 'Three middleware: auth, json and cors. The router mounts them in src/server.ts.\nNone of them counts requests.'),
+    ...request(25_400, 4200, 'r3', 'Now the limiter, with a sliding window per API key.', [
+      toolUse('toolu_write', 'Write', { file_path: '/work/app/src/middleware/limiter.ts', content: 'export function limiter(max: number, windowMs: number) { /* … */ }' }),
+      toolUse('toolu_edit', 'Edit', { file_path: '/work/app/src/server.ts', old_string: "app.use('/api', router)", new_string: "app.use('/api', limiter(100, 60_000), router)" })
+    ], 23_150, 1_240),
+    toolResult(31_000, 'toolu_write', 'File created: src/middleware/limiter.ts'),
+    toolResult(31_300, 'toolu_edit', 'The file src/server.ts has been updated.'),
+    ...request(31_500, 1900, 'r4', 'Running the tests.', [toolUse('toolu_test', 'Bash', { command: 'npm test', description: 'Run the unit tests' })], 24_520, 64),
+    toolResult(44_300, 'toolu_test', 'FAIL src/server.test.ts\n  expected header x-ratelimit-remaining to be undefined\nTests: 1 failed, 41 passed', true),
+    ...request(44_500, 2800, 'r5', 'One test still expects no rate-limit header. I’ll bring it up to date and run them again.', [
+      toolUse('toolu_fix', 'Edit', { file_path: '/work/app/src/server.test.ts', old_string: 'toBeUndefined()', new_string: "toBe('99')" }),
+      toolUse('toolu_retest', 'Bash', { command: 'npm test', description: 'Run the unit tests' })
+    ], 24_910, 312),
+    toolResult(48_100, 'toolu_fix', 'The file src/server.test.ts has been updated.'),
+    toolResult(60_400, 'toolu_retest', 'Tests: 42 passed\nTime: 11.8s'),
+    ...request(60_600, 2400, 'r6', 'Rate limiting is in: 100 requests a minute per API key, with the remaining count in a header.', [], 25_430, 268),
+
+    prompt(95_000, 'Make the limit configurable per route'),
+    ...request(95_200, 2300, 'r7', 'The limiter already takes its numbers as arguments, so each route can pass its own.', [
+      toolUse('toolu_read', 'Read', { file_path: '/work/app/src/routes/index.ts' }),
+      toolUse('toolu_routes', 'Edit', { file_path: '/work/app/src/routes/index.ts', old_string: "router.post('/upload', upload)", new_string: "router.post('/upload', limiter(10, 60_000), upload)" })
+    ], 25_760, 540),
+    toolResult(98_300, 'toolu_read', "import { Router } from 'express'\nexport const router = Router()\nrouter.post('/upload', upload)"),
+    toolResult(98_700, 'toolu_routes', 'The file src/routes/index.ts has been updated.'),
+    ...request(98_900, 2100, 'r8', 'Uploads now allow 10 a minute; every other route keeps the default of 100.', [], 26_480, 184)
+  ]
+}
+
+/** What the showcase's Explore subagent did, as its own transcript's lines. */
+export function showcaseSubagent(): unknown[] {
+  return [
+    assistant(7_600, 'e1', [toolUse('toolu_e1', 'Glob', { pattern: 'src/middleware/**' })], undefined, 'tool_use'),
+    toolResult(7_900, 'toolu_e1', 'src/middleware/auth.ts\nsrc/middleware/cors.ts'),
+    assistant(9_400, 'e2', [toolUse('toolu_e2', 'Read', { file_path: '/work/app/src/middleware/auth.ts' })], undefined, 'tool_use'),
+    toolResult(9_700, 'toolu_e2', 'export function auth() {}'),
+    assistant(12_800, 'e3', [toolUse('toolu_e3', 'Grep', { pattern: 'rateLimit|throttle' })], undefined, 'tool_use'),
+    toolResult(13_500, 'toolu_e3', 'No matches found'),
+    assistant(16_900, 'e4', [toolUse('toolu_e4', 'Read', { file_path: '/work/app/src/server.ts' })], undefined, 'tool_use'),
+    toolResult(17_300, 'toolu_e4', 'app.use(json())')
+  ]
+}
