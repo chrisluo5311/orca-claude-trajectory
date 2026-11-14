@@ -4,7 +4,7 @@
 
 ![Claude Trajectory](docs/images/cover.png)
 
-[![Watch the 60-second demo: the panel following a live session, then an older one's fixed overhead, a subagent's calls, a failed call and a request's timing](docs/images/demo-poster.png)](docs/videos/demo.mp4)
+https://github.com/user-attachments/assets/5ccd6bf9-0cf0-4ed8-935d-1382c3d5642d
 
 An [Orca](https://github.com/stablyai/orca) sidebar panel that shows what a [Claude Code](https://claude.com/claude-code) session did, request by request, oldest first:
 
