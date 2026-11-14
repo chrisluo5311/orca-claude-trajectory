@@ -4,6 +4,8 @@
 
 ![Claude Trajectory](docs/images/cover.png)
 
+[![Watch the 60-second demo: the panel following a live session, then an older one's fixed overhead, a subagent's calls, a failed call and a request's timing](docs/images/demo-poster.png)](docs/videos/demo.mp4)
+
 An [Orca](https://github.com/stablyai/orca) sidebar panel that shows what a [Claude Code](https://claude.com/claude-code) session did, request by request, oldest first:
 
 - **FIXED**: what every request carries before the conversation, estimated from the first request. Select it to open it by category: system prompt, built-in tools, MCP tools by server, MCP instructions, memory files, skills, agents, deferred tool names.
